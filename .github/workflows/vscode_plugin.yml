@@ -50,7 +50,7 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
       - name: Rust Cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           cache-bin: "true"
       - name: Build harper-ls
@@ -86,7 +86,7 @@ jobs:
           draft: true
       - name: Publish to OpenVSX
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2.0.0
+        uses: HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12 # v2.1.0
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}
           packagePath: "./packages/vscode-plugin/"
@@ -94,7 +94,7 @@ jobs:
           skipDuplicate: true
       - name: Publish to the Visual Studio Marketplace
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: HaaLeo/publish-vscode-extension@ca5561daa085dee804bf9f37fe0165785a9b14db # v2.0.0
+        uses: HaaLeo/publish-vscode-extension@1b8df468b849f76a143b8c18bf0ffa2075398d12 # v2.1.0
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
           packagePath: "./packages/vscode-plugin/"
