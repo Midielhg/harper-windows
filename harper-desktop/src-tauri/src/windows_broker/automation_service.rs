@@ -1,7 +1,8 @@
+use std::cell::RefCell;
 use std::iter::once;
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::rect::Rect;
 use crate::windows_broker::get_focused_monitor_scale;
@@ -324,6 +325,7 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         }
 
         let replacement = replacement_for_span(&request.expected_text, span, &suggestion);
+        let text_before_edit = get_text(&element).unwrap_or_default();
 
         if let Err(error) =
             replace_span_by_typing(&element, &request.expected_text, span, &replacement)
@@ -334,12 +336,32 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
 
         next_start = span.start;
 
-        // Give the app a moment to take the keystrokes before selecting the next span, since the
-        // selection is made through the accessibility API while the typing arrives as input.
-        sleep(Duration::from_millis(40));
+        // Wait for the keystrokes to land before selecting the next span. The typing arrives as
+        // input events while the selection is made through the accessibility API, so moving on
+        // too early leaves the app still applying the previous edit and it drops the selection
+        // for the next one.
+        wait_for_text_change(&element, &text_before_edit);
     }
 
     JobResult::None
+}
+
+/// How long to wait for typed input to show up in the element's own text.
+const EDIT_TIMEOUT: Duration = Duration::from_millis(600);
+/// How often to check while waiting.
+const EDIT_POLL: Duration = Duration::from_millis(30);
+
+/// Blocks until the element's text differs from `before`, or the wait times out.
+fn wait_for_text_change(element: &UIElement, before: &str) {
+    let deadline = Instant::now() + EDIT_TIMEOUT;
+
+    while Instant::now() < deadline {
+        sleep(EDIT_POLL);
+
+        if get_text(element).is_ok_and(|text| text != before) {
+            return;
+        }
+    }
 }
 
 /// The text that should end up where the lint's span is now.
@@ -405,10 +427,13 @@ const SELECTION_SETTLE: Duration = Duration::from_millis(40);
 fn select_and_confirm(element: &UIElement, range: &UITextRange) -> Result<()> {
     let mut last_error = None;
 
-    for _ in 0..SELECTION_ATTEMPTS {
-        // Let any input the app has not processed yet arrive first, so it cannot undo the
-        // selection straight after it is made.
-        sleep(SELECTION_SETTLE);
+    for attempt in 0..SELECTION_ATTEMPTS {
+        // Let any input the app has not processed yet arrive before trying again, so it cannot
+        // undo the selection straight after it is made. The first attempt does not wait: most of
+        // the time nothing is in flight and the delay would just be felt as lag.
+        if attempt > 0 {
+            sleep(SELECTION_SETTLE);
+        }
 
         if let Err(error) = range.select() {
             last_error = Some(error);
@@ -548,18 +573,33 @@ fn text_element_for_window(
     window: isize,
     expected_text: Option<&str>,
 ) -> uiautomation::Result<UIElement> {
+    if let Some(expected) = expected_text
+        && let Some(element) = remembered_text_element(expected)
+    {
+        return Ok(element);
+    }
+
     let root = automation.element_from_handle(Handle::from(window))?;
     let text_condition = automation.create_property_condition(
         UIProperty::IsTextPatternAvailable,
         Variant::from(true),
         None,
     )?;
-    let keyboard_condition = automation.create_property_condition(
-        UIProperty::HasKeyboardFocus,
-        Variant::from(true),
-        None,
-    )?;
-    let condition = automation.create_and_condition(text_condition, keyboard_condition)?;
+    // Only look for the focused provider when there is nothing else to go on. Clicking a
+    // suggestion moves keyboard focus to Harper's own popup, so by the time an edit is applied the
+    // field it belongs to no longer reports focus; the text it held is what identifies it instead.
+    let condition = match expected_text {
+        Some(_) => text_condition,
+        None => {
+            let keyboard_condition = automation.create_property_condition(
+                UIProperty::HasKeyboardFocus,
+                Variant::from(true),
+                None,
+            )?;
+
+            automation.create_and_condition(text_condition, keyboard_condition)?
+        }
+    };
 
     // An app can offer several focused text providers at once. A browser, and any app built on a
     // web view, reports its whole page as a read-only document alongside the field the caret is
@@ -614,7 +654,48 @@ fn get_text_job(automation: &UIAutomation, args: Vec<JobArgument>) -> JobResult 
         return JobResult::Err;
     };
 
-    get_text(&element).map_or(JobResult::Err, JobResult::String)
+    let Ok(text) = get_text(&element) else {
+        return JobResult::Err;
+    };
+
+    remember_text_element(&text, &element);
+
+    JobResult::String(text)
+}
+
+thread_local! {
+    /// The element the last read came from, and the text it held.
+    ///
+    /// Finding a field again by searching the window for a text provider whose contents match is
+    /// slow: every provider in the tree has to be read. The jobs all run on the same worker
+    /// thread, so the element from the read that produced a lint can simply be kept and used when
+    /// that lint is applied, which is both faster and more certain to be the same field.
+    static LAST_TEXT_ELEMENT: RefCell<Option<(String, UIElement)>> = const { RefCell::new(None) };
+}
+
+fn remember_text_element(text: &str, element: &UIElement) {
+    LAST_TEXT_ELEMENT.with(|cell| {
+        *cell.borrow_mut() = Some((text.to_string(), element.clone()));
+    });
+}
+
+/// Returns the remembered element when it still holds `expected_text`.
+fn remembered_text_element(expected_text: &str) -> Option<UIElement> {
+    LAST_TEXT_ELEMENT.with(|cell| {
+        let cached = cell.borrow();
+        let (text, element) = cached.as_ref()?;
+
+        if text != expected_text {
+            return None;
+        }
+
+        // The app may have closed or replaced the field since, so confirm it still reads back the
+        // same before handing it to an edit.
+        match get_text(element) {
+            Ok(current) if current == expected_text => Some(element.clone()),
+            _ => None,
+        }
+    })
 }
 
 use std::{ffi::c_void, mem::size_of};
