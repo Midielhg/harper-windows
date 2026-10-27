@@ -38,6 +38,13 @@ impl OsBroker for DebugBroker {
         Some(Pos2 { x: 105.0, y: 105.0 })
     }
 
+    fn pointer_pressed(&self) -> bool {
+        false
+    }
+
+    /// Not implemented here yet; the per-suggestion path is unaffected.
+    fn apply_all_suggestions(&mut self, _source_text: &str, _edits: &[(Span<char>, Suggestion)]) {}
+
     fn accessibility_permission_status(&self) -> AccessibilityPermissionStatus {
         AccessibilityPermissionStatus::Granted
     }

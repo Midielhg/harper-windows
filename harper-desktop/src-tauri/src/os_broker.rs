@@ -1,4 +1,7 @@
-use harper_core::linting::Lint;
+use harper_core::{
+    Span,
+    linting::{Lint, Suggestion},
+};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -41,6 +44,23 @@ pub trait OsBroker {
 
     /// Grab the position of the user's cursor on the screen.
     fn cursor_position(&self) -> Option<egui::Pos2>;
+
+    /// Applies every one of `edits` to the focused text element in one go.
+    ///
+    /// `source_text` is the text the lints were produced from, so the platform can refuse the
+    /// whole batch if the field changed underneath. Each edit is a span of that text and the
+    /// suggestion to put in its place; spans must not overlap.
+    fn apply_all_suggestions(&mut self, source_text: &str, edits: &[(Span<char>, Suggestion)]);
+
+    /// Whether the user is pressing the primary pointer button right now.
+    ///
+    /// The overlay is click-through wherever Harper has nothing to offer, so clicks outside a
+    /// highlight or popup never arrive as window events. Polling the button is what lets an open
+    /// popup notice that the user clicked somewhere else and get out of the way.
+    ///
+    /// A platform that cannot report this returns `false`, which leaves the popup open until it is
+    /// dismissed another way.
+    fn pointer_pressed(&self) -> bool;
 
     /// Check whether Harper has permission to access the OS' native accessibility API.
     fn accessibility_permission_status(&self) -> AccessibilityPermissionStatus;
@@ -97,6 +117,12 @@ impl OsBroker for NoopBroker {
 
     fn cursor_position(&self) -> Option<egui::Pos2> {
         None
+    }
+
+    fn apply_all_suggestions(&mut self, _source_text: &str, _edits: &[(Span<char>, Suggestion)]) {}
+
+    fn pointer_pressed(&self) -> bool {
+        false
     }
 
     fn accessibility_permission_status(&self) -> AccessibilityPermissionStatus {

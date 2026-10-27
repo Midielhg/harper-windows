@@ -13,6 +13,7 @@ use super::Error;
 use super::IgnoreLint;
 use super::OpenSettings;
 use super::RefreshConfig;
+use super::fix_all_hotkey::FixAllHotkey;
 use super::render_state::{HitTarget, RenderState};
 use super::window::Window;
 use crate::os_broker::{LintText, OsBroker};
@@ -115,6 +116,11 @@ struct WindowManagerApp {
     refresh_config: RefreshConfig,
     hovered_lint: Option<usize>,
     cursor_hittest_enabled: bool,
+    /// Whether the primary pointer button was already down at the previous poll, so one press is
+    /// acted on once instead of for every frame the user holds the button.
+    pointer_was_pressed: bool,
+    /// Watches for the shortcut that applies every suggestion at once.
+    fix_all_hotkey: FixAllHotkey,
     error: Option<Error>,
 }
 
@@ -140,6 +146,8 @@ impl WindowManagerApp {
             last_config_poll: Instant::now(),
             refresh_config: callbacks.refresh_config,
             hovered_lint: None,
+            pointer_was_pressed: false,
+            fix_all_hotkey: FixAllHotkey::install(),
             cursor_hittest_enabled: false,
             error: None,
         }
@@ -176,6 +184,8 @@ impl WindowManagerApp {
             HitTarget::Popup | HitTarget::None => None,
         };
 
+        self.close_popup_on_outside_click(hit_target);
+
         let should_enable_hittest = !matches!(hit_target, HitTarget::None);
 
         if self.cursor_hittest_enabled == should_enable_hittest {
@@ -191,6 +201,69 @@ impl WindowManagerApp {
         }
 
         self.cursor_hittest_enabled = should_enable_hittest;
+    }
+
+    /// Applies every suggestion in the focused field when the shortcut asks for it.
+    ///
+    /// The shortcut is only live while a popup is open, so the key keeps its usual meaning the
+    /// rest of the time. Lints that only point something out, such as a sentence being too long,
+    /// carry no suggestion and are left alone.
+    fn apply_all_if_requested(&mut self) {
+        self.fix_all_hotkey
+            .set_popup_open(self.render_state.popup_layout().is_some());
+
+        if !self.fix_all_hotkey.take_request() {
+            return;
+        }
+
+        let lints = self.render_state.all_lints();
+
+        let Some(source_text) = lints
+            .first()
+            .map(|actionable_lint| actionable_lint.source_text.clone())
+        else {
+            return;
+        };
+
+        let edits: Vec<_> = lints
+            .iter()
+            .filter_map(|actionable_lint| {
+                let suggestion = actionable_lint.lint.suggestions.first()?;
+
+                Some((actionable_lint.lint.span, suggestion.clone()))
+            })
+            .collect();
+
+        if edits.is_empty() {
+            return;
+        }
+
+        self.os_broker.apply_all_suggestions(&source_text, &edits);
+        self.render_state.close_popup();
+
+        for window in &self.windows {
+            window.request_redraw();
+        }
+    }
+
+    /// Dismisses an open popup when the user clicks anywhere that is not Harper's own.
+    ///
+    /// Those clicks never reach the overlay, which is click-through outside its highlights and
+    /// popup, so the press is noticed by polling rather than by a window event.
+    fn close_popup_on_outside_click(&mut self, hit_target: HitTarget) {
+        let pressed = self.os_broker.pointer_pressed();
+        let just_pressed = pressed && !self.pointer_was_pressed;
+        self.pointer_was_pressed = pressed;
+
+        if !just_pressed || !matches!(hit_target, HitTarget::None) {
+            return;
+        }
+
+        self.render_state.close_popup();
+
+        for window in &self.windows {
+            window.request_redraw();
+        }
     }
 
     /// Opens or replaces the popup only when the actual click target is a lint, leaving popup clicks
@@ -224,6 +297,7 @@ impl ApplicationHandler for WindowManagerApp {
         }
 
         self.update_cursor_hittest(event_loop);
+        self.apply_all_if_requested();
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {

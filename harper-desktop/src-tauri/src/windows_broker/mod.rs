@@ -5,7 +5,7 @@ use crate::{
 };
 use cached::cached;
 use egui::Pos2;
-use harper_core::linting::Lint;
+use harper_core::{Span, linting::Lint, linting::Suggestion};
 use std::ffi::{OsString, c_void};
 use std::os::windows::ffi::OsStringExt;
 use std::process::Command;
@@ -20,6 +20,7 @@ use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 use windows::Win32::UI::WindowsAndMessaging::{
     GUI_INMOVESIZE, GUITHREADINFO, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo,
     GetWindowThreadProcessId,
@@ -150,6 +151,23 @@ impl OsBroker for WindowsBroker {
         );
 
         Some(pos)
+    }
+
+    fn apply_all_suggestions(&mut self, source_text: &str, edits: &[(Span<char>, Suggestion)]) {
+        let Ok(mut service) = self.service.lock() else {
+            return;
+        };
+
+        service.apply_suggestions(source_text.to_string(), edits.to_vec());
+    }
+
+    fn pointer_pressed(&self) -> bool {
+        // The high bit is set while the button is down. The low bit, which reports whether the
+        // button was pressed since the last call, is deliberately ignored: this is polled every
+        // frame and only the current state matters.
+        let state = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) };
+
+        state as u16 & 0x8000 != 0
     }
 
     fn accessibility_permission_status(&self) -> AccessibilityPermissionStatus {

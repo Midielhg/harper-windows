@@ -366,6 +366,20 @@ impl OsBroker for MacBroker {
         Some(egui::pos2(location.x as f32, location.y as f32))
     }
 
+    /// Not implemented on macOS yet, so a popup there still waits to be dismissed by its own
+    /// controls rather than by a click elsewhere.
+    fn pointer_pressed(&self) -> bool {
+        false
+    }
+
+    /// Not implemented here yet; the per-suggestion path is unaffected.
+    fn apply_all_suggestions(
+        &mut self,
+        _source_text: &str,
+        _edits: &[(harper_core::Span<char>, harper_core::linting::Suggestion)],
+    ) {
+    }
+
     fn accessibility_permission_status(&self) -> AccessibilityPermissionStatus {
         if unsafe { AXIsProcessTrusted() } {
             AccessibilityPermissionStatus::Granted
