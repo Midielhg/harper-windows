@@ -53,9 +53,14 @@ impl Window {
         // The overlay presents through a DirectComposition visual (see `wgpu_configuration`).
         // Without this the window also keeps its legacy GDI redirection bitmap, which DWM
         // composites underneath that visual as an opaque white rectangle.
+        //
+        // The overlay is also not a window the user can switch to, so it stays out of the taskbar
+        // and the Alt+Tab list rather than showing one empty "Harper" entry per monitor.
         #[cfg(windows)]
         {
-            attributes = attributes.with_no_redirection_bitmap(true);
+            attributes = attributes
+                .with_no_redirection_bitmap(true)
+                .with_skip_taskbar(true);
         }
 
         let window = Arc::new(event_loop.create_window(attributes)?);
@@ -113,6 +118,22 @@ impl Window {
         Ok(())
     }
 
+    /// This window's top-left corner in screen coordinates, in the same points that drawing uses.
+    ///
+    /// Lint rectangles arrive in screen coordinates, while each overlay window draws in its own
+    /// coordinates. Subtracting this is what keeps highlights and popups on the monitor that the
+    /// text is actually on, instead of placing everything as though every window started at the
+    /// top-left of the primary monitor.
+    fn origin(&self) -> egui::Vec2 {
+        let position = self
+            .inner
+            .outer_position()
+            .unwrap_or(PhysicalPosition::new(0, 0));
+        let scale = self.egui_state.egui_ctx().pixels_per_point();
+
+        egui::vec2(position.x as f32, position.y as f32) / scale
+    }
+
     pub fn handle_event(&mut self, event: &WindowEvent) {
         let response = self.egui_state.on_window_event(&self.inner, event);
 
@@ -133,8 +154,9 @@ impl Window {
     pub fn render(&mut self, render_state: &mut RenderState) {
         let context = self.egui_state.egui_ctx().clone();
         let input = self.egui_state.take_egui_input(&self.inner);
+        let origin = self.origin();
         let output = context.run_ui(input, |ui| {
-            render_state.render(ui);
+            render_state.render(ui, origin);
         });
 
         self.egui_state

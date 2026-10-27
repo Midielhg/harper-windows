@@ -81,6 +81,7 @@ enum ButtonContent<'a> {
 ///
 /// `sidebar_position` is the flyout card's current offset from the list card's top. The caller
 /// animates it toward [`sidebar_target`]. `shown_suggestion` only selects the highlighted row.
+#[expect(clippy::too_many_arguments)]
 pub fn render_lint_card(
     ui: &mut egui::Ui,
     rect: &Rect,
@@ -89,28 +90,40 @@ pub fn render_lint_card(
     shown_suggestion: Option<usize>,
     sidebar_position: f32,
     markdown_cache: &mut CommonMarkCache,
+    origin: egui::Vec2,
+    drag: &mut egui::Vec2,
 ) -> Option<LintCardAction> {
-    let layout = popup_layout_for_lint(rect, lint, sidebar_position);
+    let layout = popup_layout_for_lint(rect, lint, sidebar_position)
+        .translate(*drag)
+        .translate(-origin);
     let problem_text = problem_text(lint, source_text);
     let span = (lint.span.start, lint.span.end);
 
-    let list_action = show_card(ui.ctx(), "harper-lint-card-list", span, layout.list, |ui| {
-        let mut action = None;
-        render_suggestion_list(
-            ui,
-            lint,
-            &problem_text,
-            shown_suggestion.unwrap_or(0),
-            &mut action,
-        );
-        action
-    });
+    let list_action = show_card(
+        ui.ctx(),
+        "harper-lint-card-list",
+        span,
+        layout.list,
+        drag,
+        |ui| {
+            let mut action = None;
+            render_suggestion_list(
+                ui,
+                lint,
+                &problem_text,
+                shown_suggestion.unwrap_or(0),
+                &mut action,
+            );
+            action
+        },
+    );
 
     let flyout_action = show_card(
         ui.ctx(),
         "harper-lint-card-flyout",
         span,
         layout.flyout,
+        drag,
         |ui| {
             let mut action = None;
             render_flyout(ui, lint, markdown_cache, &mut action);
@@ -131,12 +144,25 @@ fn show_card<R>(
     name: &'static str,
     id_salt: impl Hash,
     rect: egui::Rect,
+    drag: &mut egui::Vec2,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     egui::Area::new(egui::Id::new(name))
         .order(egui::Order::Foreground)
         .fixed_pos(rect.min)
         .show(ctx, |ui| {
+            // Claim the whole card for dragging before any content is added, so the rows and
+            // buttons drawn afterward sit on top of it and still take their own clicks. The caller
+            // applies the accumulated distance to both cards, so the popup moves as one piece.
+            let drag_handle = ui.interact(
+                rect,
+                egui::Id::new((name, "drag-handle")),
+                egui::Sense::drag(),
+            );
+            if drag_handle.dragged() {
+                *drag += drag_handle.drag_delta();
+            }
+
             ui.set_max_size(rect.size());
             card_frame()
                 .show(ui, |ui| {

@@ -6,8 +6,11 @@ use super::{lint_kind_color32, rect_bounds};
 use crate::rect::Rect;
 
 /// Draws the always-visible lint marker without making the renderer responsible for popup state.
-pub fn draw_highlight(ui: &mut egui::Ui, rect: &Rect, lint: &Lint) {
-    let rect_bounds = rect_bounds(rect);
+///
+/// `rect` is in screen coordinates; `origin` is the overlay window's top-left corner in those same
+/// coordinates, so the marker lands on the window that covers that part of the screen.
+pub fn draw_highlight(ui: &mut egui::Ui, rect: &Rect, lint: &Lint, origin: egui::Vec2) {
+    let rect_bounds = rect_bounds(rect).translate(-origin);
     let color = lint_color(lint);
     let [r, g, b, _] = color.to_array();
     let fill_color = egui::Color32::from_rgba_unmultiplied(r, g, b, 24);

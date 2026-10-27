@@ -50,6 +50,12 @@ pub struct RenderState {
     /// When `render` last ran, used to move the sidebar at a speed that follows real time.
     last_render: Option<Instant>,
 
+    /// How far the user has dragged the popup from where the layout placed it.
+    ///
+    /// Drawing and hit-testing both add this, so the cards and their clickable area stay together.
+    /// It resets whenever a popup opens or closes, so each lint starts at its own anchor.
+    popup_drag: egui::Vec2,
+
     /// Cache for markdown-rendered lint messages so popup redraws do not repeatedly rebuild markdown
     /// resources from scratch.
     markdown_cache: CommonMarkCache,
@@ -82,6 +88,7 @@ impl RenderState {
             shown_suggestion: None,
             current_sidebar_position: FIRST_ROW_OFFSET,
             last_render: None,
+            popup_drag: egui::Vec2::ZERO,
             markdown_cache: CommonMarkCache::default(),
             ignore_lint,
             add_to_dictionary,
@@ -130,6 +137,7 @@ impl RenderState {
         self.highlighted_lint = highlighted_lint.filter(|index| *index < self.lints().len());
         self.shown_suggestion = None;
         self.current_sidebar_position = FIRST_ROW_OFFSET;
+        self.popup_drag = egui::Vec2::ZERO;
     }
 
     /// Centralizes the close behavior so the popup close button only has to clear the selected lint.
@@ -137,6 +145,7 @@ impl RenderState {
         self.highlighted_lint = None;
         self.shown_suggestion = None;
         self.current_sidebar_position = FIRST_ROW_OFFSET;
+        self.popup_drag = egui::Vec2::ZERO;
     }
 
     /// Checks if a given position touches a hit target.
@@ -167,6 +176,7 @@ impl RenderState {
                     &positioned_lint.lint,
                     self.current_sidebar_position,
                 )
+                .translate(self.popup_drag)
             })
     }
 
@@ -174,7 +184,7 @@ impl RenderState {
     /// regions and clickable regions do not drift apart.
     ///
     /// Each call also moves the sidebar toward its target by the time since the previous call.
-    pub fn render(&mut self, ui: &mut egui::Ui) {
+    pub fn render(&mut self, ui: &mut egui::Ui, origin: egui::Vec2) {
         let now = Instant::now();
         let time_since_last_render = self
             .last_render
@@ -194,7 +204,7 @@ impl RenderState {
         }
 
         for positioned_lint in self.lints() {
-            draw_highlight(ui, &positioned_lint.rect, &positioned_lint.lint);
+            draw_highlight(ui, &positioned_lint.rect, &positioned_lint.lint, origin);
         }
 
         if let Some(index) = self.highlighted_lint
@@ -204,7 +214,8 @@ impl RenderState {
             let lint = positioned_lint.lint.clone();
             let source_text = positioned_lint.source_text.clone();
 
-            match render_lint_card(
+            let mut drag = self.popup_drag;
+            let action = render_lint_card(
                 ui,
                 &rect,
                 &lint,
@@ -212,7 +223,12 @@ impl RenderState {
                 self.shown_suggestion,
                 self.current_sidebar_position,
                 &mut self.markdown_cache,
-            ) {
+                origin,
+                &mut drag,
+            );
+            self.popup_drag = drag;
+
+            match action {
                 Some(LintCardAction::Close) => self.close_popup(),
                 Some(LintCardAction::OpenSettings) => {
                     (self.open_settings)();

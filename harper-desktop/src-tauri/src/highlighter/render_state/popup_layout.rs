@@ -45,6 +45,18 @@ impl PopupLayout {
     pub fn contains(&self, pos: egui::Pos2) -> bool {
         self.list.contains(pos) || self.flyout.contains(pos)
     }
+
+    /// Moves both cards by `offset`.
+    ///
+    /// Drawing uses this to convert screen coordinates into one overlay window's own coordinates,
+    /// and both drawing and hit-testing use it to apply the distance the user has dragged the
+    /// popup.
+    pub fn translate(self, offset: egui::Vec2) -> Self {
+        Self {
+            list: self.list.translate(offset),
+            flyout: self.flyout.translate(offset),
+        }
+    }
 }
 
 /// Computes the card positions with the algorithm from `popupPosition` in the Chrome extension's
