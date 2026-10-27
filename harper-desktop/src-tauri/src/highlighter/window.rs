@@ -2,6 +2,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use egui_wgpu::wgpu::PresentMode;
+#[cfg(windows)]
+use egui_wgpu::wgpu::{Backends, Dx12SwapchainKind};
 use egui_wgpu::winit::Painter;
 use egui_wgpu::{RendererOptions, WgpuConfiguration, WgpuSetup};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -65,11 +67,7 @@ impl Window {
 
         let mut painter = Painter::new(
             context,
-            WgpuConfiguration {
-                present_mode: PresentMode::Fifo,
-                wgpu_setup: WgpuSetup::from_display_handle(event_loop.owned_display_handle()),
-                ..Default::default()
-            },
+            wgpu_configuration(event_loop),
             true,
             RendererOptions::default(),
         )
@@ -142,5 +140,35 @@ impl Window {
             &output.textures_delta,
             Vec::new(),
         );
+    }
+}
+
+/// Builds the wgpu configuration shared by every overlay window.
+///
+/// The overlay only works if the backbuffer can be composited transparently over whatever is
+/// already on screen. On Windows that is not the default: a DXGI swapchain created straight from
+/// an `HWND` (and likewise the Vulkan backend) advertises nothing but
+/// `CompositeAlphaMode::Opaque`, so egui presents opaquely and the "transparent" overlay paints
+/// its clear color across the entire monitor — the black or white full-screen window users
+/// report. Asking DX12 for a DirectComposition-backed swapchain instead makes premultiplied alpha
+/// available, which is what egui picks up to blend the overlay away.
+fn wgpu_configuration(event_loop: &ActiveEventLoop) -> WgpuConfiguration {
+    #[cfg_attr(not(windows), expect(unused_mut))]
+    let mut wgpu_setup = WgpuSetup::from_display_handle(event_loop.owned_display_handle());
+
+    #[cfg(windows)]
+    if let WgpuSetup::CreateNew(setup) = &mut wgpu_setup {
+        setup.instance_descriptor.backends = Backends::from_env().unwrap_or(Backends::DX12);
+        setup
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .presentation_system = Dx12SwapchainKind::DxgiFromVisual.with_env();
+    }
+
+    WgpuConfiguration {
+        present_mode: PresentMode::Fifo,
+        wgpu_setup,
+        ..Default::default()
     }
 }
