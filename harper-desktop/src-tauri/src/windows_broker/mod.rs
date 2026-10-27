@@ -9,6 +9,7 @@ use harper_core::{Span, linting::Lint, linting::Suggestion};
 use std::ffi::{OsString, c_void};
 use std::os::windows::ffi::OsStringExt;
 use std::process::Command;
+use std::time::{Duration, Instant};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -30,9 +31,20 @@ use wintheon::file::{IconSize, Priority};
 use wintheon::gather::Gatherer;
 mod automation_service;
 
+/// How long the text has to stay unchanged before Harper reads the screen positions of its lints.
+///
+/// Those positions come from the accessibility API, which an app answers on the same thread it
+/// handles typing on. Asking after every keystroke makes the app alternate between serving Harper
+/// and taking the next key, which is felt as lag while typing. Waiting for a short pause costs
+/// nothing in practice: it is roughly the gap after finishing a word.
+const TEXT_SETTLE: Duration = Duration::from_millis(350);
+
 pub struct WindowsBroker {
     service: Arc<Mutex<AutomationService>>,
     is_integration_enabled: Box<dyn FnMut(&str) -> bool + Send + Sync>,
+    /// The text seen at the last read, and when it last differed from the read before it.
+    last_text: Option<String>,
+    last_text_change: Option<Instant>,
 }
 
 impl WindowsBroker {
@@ -42,7 +54,22 @@ impl WindowsBroker {
         Self {
             service: Arc::new(Mutex::new(AutomationService::create_and_start())),
             is_integration_enabled: Box::new(is_integration_enabled),
+            last_text: None,
+            last_text_change: None,
         }
+    }
+
+    /// Whether the text has been the same for long enough to be worth measuring again.
+    fn text_has_settled(&mut self, text: &str) -> bool {
+        if self.last_text.as_deref() != Some(text) {
+            self.last_text = Some(text.to_string());
+            self.last_text_change = Some(Instant::now());
+
+            return false;
+        }
+
+        self.last_text_change
+            .is_none_or(|changed_at| changed_at.elapsed() >= TEXT_SETTLE)
     }
 
     pub fn should_lint_focused_window(&mut self) -> Option<bool> {
@@ -94,6 +121,13 @@ impl OsBroker for WindowsBroker {
         let text = self.service.lock().ok()?.get_text()?;
         if text.len() > 16_000 {
             return Some(Vec::new());
+        }
+
+        if !self.text_has_settled(&text) {
+            // Returning nothing leaves the highlights from the previous read on screen, so they
+            // stay put while the user is typing instead of flickering, and are brought back into
+            // step as soon as there is a pause.
+            return None;
         }
 
         let lints = lint_text(&text);

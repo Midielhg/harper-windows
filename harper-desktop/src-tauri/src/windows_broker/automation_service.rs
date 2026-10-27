@@ -325,7 +325,6 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         }
 
         let replacement = replacement_for_span(&request.expected_text, span, &suggestion);
-        let text_before_edit = get_text(&element).unwrap_or_default();
 
         if let Err(error) =
             replace_span_by_typing(&element, &request.expected_text, span, &replacement)
@@ -335,12 +334,6 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         }
 
         next_start = span.start;
-
-        // Wait for the keystrokes to land before selecting the next span. The typing arrives as
-        // input events while the selection is made through the accessibility API, so moving on
-        // too early leaves the app still applying the previous edit and it drops the selection
-        // for the next one.
-        wait_for_text_change(&element, &text_before_edit);
     }
 
     JobResult::None
@@ -349,18 +342,18 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
 /// How long to wait for typed input to show up in the element's own text.
 const EDIT_TIMEOUT: Duration = Duration::from_millis(600);
 /// How often to check while waiting.
-const EDIT_POLL: Duration = Duration::from_millis(30);
+const EDIT_POLL: Duration = Duration::from_millis(15);
 
-/// Blocks until the element's text differs from `before`, or the wait times out.
-fn wait_for_text_change(element: &UIElement, before: &str) {
+/// Blocks until the element reads back `expected`, or the wait times out.
+fn wait_for_text(element: &UIElement, expected: &str) {
     let deadline = Instant::now() + EDIT_TIMEOUT;
 
     while Instant::now() < deadline {
-        sleep(EDIT_POLL);
-
-        if get_text(element).is_ok_and(|text| text != before) {
+        if get_text(element).is_ok_and(|text| text == expected) {
             return;
         }
+
+        sleep(EDIT_POLL);
     }
 }
 
@@ -404,13 +397,34 @@ fn replace_span_by_typing(
 
     select_and_confirm(element, &range)?;
 
+    // Work out what the field should read once the keys land, from what it reads right now rather
+    // than from the text the lints were made on, which an earlier edit in the same batch may
+    // already have changed.
+    let before = get_text(element).unwrap_or_default();
+    let expected = replaced_text(&before, span, replacement);
+
     if replacement.is_empty() {
         send_key(VK_BACK);
     } else {
         send_text(replacement);
     }
 
+    // Hold the worker until the app has taken every keystroke. An app answers accessibility
+    // requests on the same thread it handles input on, so the lint loop — which runs on this
+    // worker — reading its text while keys are still queued makes it alternate between the two,
+    // and the replacement appears one slow character at a time.
+    wait_for_text(element, &expected);
+
     Ok(())
+}
+
+/// `text` with the characters in `span` replaced by `replacement`.
+fn replaced_text(text: &str, span: Span<char>, replacement: &str) -> String {
+    text.chars()
+        .take(span.start)
+        .chain(replacement.chars())
+        .chain(text.chars().skip(span.end))
+        .collect()
 }
 
 /// Number of times to set the selection before giving up on it holding.
