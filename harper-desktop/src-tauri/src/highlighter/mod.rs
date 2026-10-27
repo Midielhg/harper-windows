@@ -1,4 +1,5 @@
 mod error;
+mod fix_all_hotkey;
 mod render_state;
 mod window;
 mod window_manager;

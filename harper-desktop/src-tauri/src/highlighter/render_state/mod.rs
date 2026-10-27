@@ -122,6 +122,11 @@ impl RenderState {
             .filter(|index| row_count.is_some_and(|row_count| *index < row_count));
     }
 
+    /// The lints currently drawn, so the window manager can act on all of them at once.
+    pub fn all_lints(&self) -> &[ActionableLint] {
+        self.lints()
+    }
+
     fn lints(&self) -> &[ActionableLint] {
         self.last_lints.as_deref().unwrap_or_default()
     }

@@ -35,12 +35,20 @@ struct ApplySuggestionRequest {
     suggestion: Suggestion,
 }
 
+#[derive(Debug)]
+struct ApplyAllRequest {
+    window: isize,
+    expected_text: String,
+    edits: Vec<(Span<char>, Suggestion)>,
+}
+
 #[derive(Debug, Is)]
 enum JobArgument {
     Span(Span<char>),
     Window(isize),
     Text(String),
     ApplySuggestion(ApplySuggestionRequest),
+    ApplyAll(ApplyAllRequest),
 }
 
 /// The result of a job run by the worker thread.
@@ -160,6 +168,28 @@ impl AutomationService {
         );
     }
 
+    /// Applies every edit in one pass over the focused element.
+    ///
+    /// The edits are applied from the end of the text backwards, so the positions of the ones
+    /// still to come are not moved by the ones already made.
+    pub fn apply_suggestions(
+        &mut self,
+        expected_text: String,
+        edits: Vec<(Span<char>, Suggestion)>,
+    ) {
+        let Some(window) = self.resolve_focused_window() else {
+            return;
+        };
+
+        let request = ApplyAllRequest {
+            window,
+            expected_text,
+            edits,
+        };
+
+        let _ = self.run_worker_job(apply_all_job, vec![JobArgument::ApplyAll(request)]);
+    }
+
     /// Pass a collection of text spans to the worker and have it compute the associated bounding boxes for each span.
     /// Each span may have multiple bounding boxes.
     /// Input spans share the same index as their output bounding box.
@@ -257,6 +287,56 @@ fn apply_suggestion_job(automation: &UIAutomation, mut arguments: Vec<JobArgumen
         {
             eprintln!("Unable to apply Windows suggestion: {error}");
         }
+    }
+
+    JobResult::None
+}
+
+/// Applies a whole batch of suggestions to the focused element.
+///
+/// Edits run from the end of the text backwards so that each span still refers to the same
+/// characters when its turn comes, and overlapping edits are dropped rather than applied on top of
+/// one another.
+fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> JobResult {
+    let Some(JobArgument::ApplyAll(request)) = arguments.pop() else {
+        return JobResult::Err;
+    };
+
+    if !arguments.is_empty() {
+        return JobResult::Err;
+    }
+
+    let Ok(element) =
+        text_element_for_window(automation, request.window, Some(&request.expected_text))
+    else {
+        eprintln!("Unable to apply Windows suggestions: the source text changed");
+        return JobResult::None;
+    };
+
+    let mut edits = request.edits;
+    edits.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
+
+    let mut next_start = request.expected_text.chars().count();
+
+    for (span, suggestion) in edits {
+        if span.end > next_start {
+            continue;
+        }
+
+        let replacement = replacement_for_span(&request.expected_text, span, &suggestion);
+
+        if let Err(error) =
+            replace_span_by_typing(&element, &request.expected_text, span, &replacement)
+        {
+            eprintln!("Unable to apply one of the Windows suggestions: {error}");
+            continue;
+        }
+
+        next_start = span.start;
+
+        // Give the app a moment to take the keystrokes before selecting the next span, since the
+        // selection is made through the accessibility API while the typing arrives as input.
+        sleep(Duration::from_millis(40));
     }
 
     JobResult::None
