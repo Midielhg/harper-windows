@@ -11,10 +11,14 @@ use uiautomation::types::{Handle, TextPatternRangeEndpoint, TextUnit, TreeScope,
 use uiautomation::variants::Variant;
 use uiautomation::{
     UIAutomation, UIElement,
-    patterns::{UITextPattern, UIValuePattern},
+    patterns::{UITextPattern, UITextRange, UIValuePattern},
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK,
+};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
 /// Information about a worker thread.
@@ -236,28 +240,130 @@ fn apply_suggestion_job(automation: &UIAutomation, mut arguments: Vec<JobArgumen
         }
     };
 
-    let Ok(value_pattern) = element.get_pattern::<UIValuePattern>() else {
-        eprintln!(
-            "Unable to apply Windows suggestion: the text element has no writable value pattern"
-        );
-        return JobResult::None;
-    };
+    // Replace the lint's own characters rather than rewriting the whole value. Notepad reports a
+    // writable value pattern and then ignores what is written to it, and most editors built on a
+    // web view expose no value pattern at all, so setting the value is not something to rely on.
+    // Selecting the span and typing over it is what any control that accepts keyboard input
+    // supports, and it leaves the app's own undo history intact.
+    let replacement = replacement_for_span(&current_text, request.span, &request.suggestion);
 
-    match value_pattern.is_readonly() {
-        Ok(true) => {
-            eprintln!("Unable to apply Windows suggestion: the text element is read-only");
-        }
-        Ok(false) => {
-            if let Err(error) = value_pattern.set_value(&updated_text) {
-                eprintln!("Unable to apply Windows suggestion: {error}");
-            }
-        }
-        Err(error) => {
-            eprintln!("Unable to determine whether the Windows text element is writable: {error}");
+    if let Err(error) = replace_span_by_typing(&element, &current_text, request.span, &replacement)
+    {
+        eprintln!("Unable to type the Windows suggestion: {error}");
+
+        if let Ok(value_pattern) = element.get_pattern::<UIValuePattern>()
+            && value_pattern.is_readonly() == Ok(false)
+            && let Err(error) = value_pattern.set_value(&updated_text)
+        {
+            eprintln!("Unable to apply Windows suggestion: {error}");
         }
     }
 
     JobResult::None
+}
+
+/// The text that should end up where the lint's span is now.
+///
+/// Selecting the span and typing this is equivalent to applying the suggestion, including for
+/// `InsertAfter`, which keeps the original text and adds to it.
+fn replacement_for_span(current_text: &str, span: Span<char>, suggestion: &Suggestion) -> String {
+    match suggestion {
+        Suggestion::ReplaceWith(chars) => chars.iter().collect(),
+        Suggestion::InsertAfter(chars) => current_text
+            .chars()
+            .skip(span.start)
+            .take(span.len())
+            .chain(chars.iter().copied())
+            .collect(),
+        Suggestion::Remove => String::new(),
+    }
+}
+
+/// Selects the characters in `span` and types `replacement` over them.
+///
+/// The element takes keyboard focus first, because the replacement is sent as ordinary key input.
+/// An empty replacement deletes the selection instead of typing nothing.
+fn replace_span_by_typing(
+    element: &UIElement,
+    current_text: &str,
+    span: Span<char>,
+    replacement: &str,
+) -> Result<()> {
+    if span.end > current_text.chars().count() {
+        return Err(Error::new(
+            uiautomation::errors::ERR_INVALID_ARG,
+            "the lint span is outside the source text",
+        ));
+    }
+
+    element.set_focus()?;
+
+    let range = text_range_for_span(element, span.start as i32, span.len() as i32)?;
+    range.select()?;
+
+    if replacement.is_empty() {
+        send_key(VK_BACK);
+    } else {
+        send_text(replacement);
+    }
+
+    Ok(())
+}
+
+/// Sends `text` as Unicode key input to whatever currently has keyboard focus.
+fn send_text(text: &str) {
+    let inputs: Vec<INPUT> = text
+        .encode_utf16()
+        .flat_map(|unit| [unicode_input(unit, false), unicode_input(unit, true)])
+        .collect();
+
+    send_inputs(&inputs);
+}
+
+fn send_key(key: VIRTUAL_KEY) {
+    send_inputs(&[key_input(key, false), key_input(key, true)]);
+}
+
+fn send_inputs(inputs: &[INPUT]) {
+    if inputs.is_empty() {
+        return;
+    }
+
+    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
+
+    if sent as usize != inputs.len() {
+        eprintln!(
+            "Only {sent} of {} Windows input events were accepted",
+            inputs.len()
+        );
+    }
+}
+
+fn unicode_input(unit: u16, key_up: bool) -> INPUT {
+    keyboard_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE, key_up)
+}
+
+fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {
+    keyboard_input(key, 0, KEYBD_EVENT_FLAGS(0), key_up)
+}
+
+fn keyboard_input(key: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS, key_up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: scan,
+                dwFlags: if key_up {
+                    flags | KEYEVENTF_KEYUP
+                } else {
+                    flags
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 fn apply_suggestion_to_text(
@@ -306,11 +412,15 @@ fn text_element_for_window(
     )?;
     let condition = automation.create_and_condition(text_condition, keyboard_condition)?;
 
+    // An app can offer several focused text providers at once. A browser, and any app built on a
+    // web view, reports its whole page as a read-only document alongside the field the caret is
+    // in, and the document comes first. Taking that one lints every word on screen and offers
+    // suggestions that cannot be applied, so prefer a provider the user can actually type into.
+    let mut fallback = None;
+
     for element in root.find_all(TreeScope::Subtree, &condition)? {
         if let Some(expected) = expected_text {
-            let text = get_text(&element);
-
-            let Ok(text) = text else {
+            let Ok(text) = get_text(&element) else {
                 continue;
             };
 
@@ -319,13 +429,32 @@ fn text_element_for_window(
             }
         }
 
-        return Ok(element);
+        match is_read_only(&element) {
+            Some(false) => return Ok(element),
+            // Keep providers that do not answer the question as a last resort, so an editor with
+            // an unusual accessibility implementation keeps working as it did before.
+            None => fallback = fallback.or(Some(element)),
+            Some(true) => {}
+        }
     }
 
-    Err(Error::new(
-        uiautomation::errors::ERR_NOTFOUND,
-        "no text element found",
-    ))
+    fallback.ok_or_else(|| {
+        Error::new(
+            uiautomation::errors::ERR_NOTFOUND,
+            "no editable text element found",
+        )
+    })
+}
+
+/// Whether `element` refuses edits, as far as it is willing to say.
+///
+/// `None` means the element does not report the property at all, which is not the same as being
+/// writable and is treated separately by the caller.
+fn is_read_only(element: &UIElement) -> Option<bool> {
+    element
+        .get_property_value(UIProperty::ValueIsReadOnly)
+        .ok()
+        .and_then(|value| value.try_into().ok())
 }
 
 fn get_text_job(automation: &UIAutomation, args: Vec<JobArgument>) -> JobResult {
@@ -362,18 +491,11 @@ impl Drop for OwnedSafeArray {
     }
 }
 
-fn bounding_rectangles_for_span(
-    element: &UIElement,
-    start: i32,
-    len: i32,
-) -> Result<Vec<(f64, f64, f64, f64)>> {
-    if start < 0 || len < 0 {
-        return Err(Error::new(
-            uiautomation::errors::ERR_INVALID_ARG,
-            "start and len must be non-negative",
-        ));
-    }
-
+/// Builds a text range covering `len` characters starting at `start` in the element's text.
+///
+/// Both the bounding boxes drawn for a lint and the selection used to replace it come from here,
+/// so a highlight and the text an applied suggestion overwrites are always the same characters.
+fn text_range_for_span(element: &UIElement, start: i32, len: i32) -> Result<UITextRange> {
     let pattern: UITextPattern = element.get_pattern()?;
     let range = pattern.get_document_range()?;
 
@@ -392,6 +514,23 @@ fn bounding_rectangles_for_span(
     )?;
 
     range.move_endpoint_by_unit(TextPatternRangeEndpoint::End, TextUnit::Character, len)?;
+
+    Ok(range)
+}
+
+fn bounding_rectangles_for_span(
+    element: &UIElement,
+    start: i32,
+    len: i32,
+) -> Result<Vec<(f64, f64, f64, f64)>> {
+    if start < 0 || len < 0 {
+        return Err(Error::new(
+            uiautomation::errors::ERR_INVALID_ARG,
+            "start and len must be non-negative",
+        ));
+    }
+
+    let range = text_range_for_span(element, start, len)?;
 
     let raw: &IUIAutomationTextRange = range.as_ref();
     let array = OwnedSafeArray(unsafe { raw.GetBoundingRectangles()? });
