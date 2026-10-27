@@ -165,7 +165,13 @@ impl OsBroker for WindowsBroker {
             return entry.display_name;
         }
 
-        bundle_id.to_string()
+        // An app missing from the installed-app catalog still has a name worth showing. Fall back
+        // to the executable's own name rather than its whole path, which is too long to read and
+        // is available through the integration's About row.
+        PathBuf::from(bundle_id)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| bundle_id.to_string())
     }
 
     fn installed_application_bundle_ids(&self) -> Result<Vec<String>, String> {

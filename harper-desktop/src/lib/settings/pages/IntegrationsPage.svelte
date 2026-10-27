@@ -29,6 +29,13 @@ let isAutoEnableSaving = false;
 let autoEnableError = '';
 let appPickerOpen = false;
 let newBundleId = '';
+/// Apps whose "About" row is expanded, keyed by bundle ID. The location is long and rarely
+/// relevant, so the row shows the app's name until the user asks for the rest.
+let aboutShown: Record<string, boolean> = {};
+
+function toggleAbout(bundleId: string) {
+	aboutShown = { ...aboutShown, [bundleId]: !aboutShown[bundleId] };
+}
 
 $: existingBundleIds = integrations.map((integration) => integration.bundle_id);
 
@@ -196,8 +203,18 @@ function closeAppPicker() {
             <AppIcon bundleId={app.bundle_id} name={app.name} />
             <div class="grow">
               <strong>{app.name}</strong>
-              <p>{app.bundle_id}</p>
+              {#if aboutShown[app.bundle_id]}
+                <p class="app-path">{app.bundle_id}</p>
+              {/if}
             </div>
+            <Button
+              unstyled
+              class="about-button"
+              type="button"
+              aria-expanded={Boolean(aboutShown[app.bundle_id])}
+              aria-label={`About ${app.name}`}
+              on:click={() => toggleAbout(app.bundle_id)}
+            >About</Button>
             <IconButton
               danger
               disabled={isIntegrationsLoading || isIntegrationsSaving}

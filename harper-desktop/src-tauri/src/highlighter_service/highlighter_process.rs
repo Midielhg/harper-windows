@@ -14,7 +14,18 @@ pub struct HighlighterProcess {
 impl HighlighterProcess {
     /// Must be called from within a Tokio runtime
     pub fn spawn() -> io::Result<Self> {
-        let child = Command::new(std::env::current_exe()?)
+        let mut command = Command::new(std::env::current_exe()?);
+
+        // The highlighter is a background process that only talks over its pipes. Without this it
+        // is handed a console window of its own, which flashes up or sits in the taskbar every
+        // time the service starts.
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let child = command
             .arg("highlighter")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
