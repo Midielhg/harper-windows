@@ -379,7 +379,8 @@ fn replace_span_by_typing(
     element.set_focus()?;
 
     let range = text_range_for_span(element, span.start as i32, span.len() as i32)?;
-    range.select()?;
+
+    select_and_confirm(element, &range)?;
 
     if replacement.is_empty() {
         send_key(VK_BACK);
@@ -388,6 +389,74 @@ fn replace_span_by_typing(
     }
 
     Ok(())
+}
+
+/// Number of times to set the selection before giving up on it holding.
+const SELECTION_ATTEMPTS: usize = 4;
+/// How long to let the app work through queued input between attempts.
+const SELECTION_SETTLE: Duration = Duration::from_millis(40);
+
+/// Selects `range` and returns once the app agrees that is what is selected.
+///
+/// The click that asked for the suggestion can still be on its way to the app, and when it lands
+/// it moves the caret to wherever the pointer is. Typing then puts the replacement there instead
+/// of over the mistake. Waiting for the selection to hold means the text goes where the highlight
+/// was, no matter where the pointer happens to be.
+fn select_and_confirm(element: &UIElement, range: &UITextRange) -> Result<()> {
+    let mut last_error = None;
+
+    for _ in 0..SELECTION_ATTEMPTS {
+        // Let any input the app has not processed yet arrive first, so it cannot undo the
+        // selection straight after it is made.
+        sleep(SELECTION_SETTLE);
+
+        if let Err(error) = range.select() {
+            last_error = Some(error);
+            continue;
+        }
+
+        match selection_matches(element, range) {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                last_error = Some(Error::new(
+                    uiautomation::errors::ERR_NOTFOUND,
+                    "the app moved the selection away from the lint",
+                ));
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        Error::new(
+            uiautomation::errors::ERR_NOTFOUND,
+            "could not select the text to replace",
+        )
+    }))
+}
+
+/// Whether the app's current selection is exactly `range`.
+fn selection_matches(element: &UIElement, range: &UITextRange) -> Result<bool> {
+    let pattern: UITextPattern = element.get_pattern()?;
+
+    for selected in pattern.get_selection()? {
+        let same_start = selected.compare_endpoints(
+            TextPatternRangeEndpoint::Start,
+            range,
+            TextPatternRangeEndpoint::Start,
+        )?;
+        let same_end = selected.compare_endpoints(
+            TextPatternRangeEndpoint::End,
+            range,
+            TextPatternRangeEndpoint::End,
+        )?;
+
+        if same_start == 0 && same_end == 0 {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// Sends `text` as Unicode key input to whatever currently has keyboard focus.
