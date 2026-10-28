@@ -68,6 +68,8 @@ type WorkerJob = fn(&UIAutomation, Vec<JobArgument>) -> JobResult;
 /// Necessary because the API has very specific thread setting requirements to work.
 pub struct AutomationService {
     worker_data: Option<WorkerData>,
+    /// Results of jobs that were sent without waiting for them, still to be taken off the channel.
+    pending_results: usize,
     // Needed to redirect focus to the last focused window when the focus arrives on the Harper highlighter window
     last_focused_window: Option<isize>,
 }
@@ -77,6 +79,7 @@ impl AutomationService {
         let mut output = Self {
             last_focused_window: None,
             worker_data: None,
+            pending_results: 0,
         };
 
         output.start_worker_thread();
@@ -127,10 +130,47 @@ impl AutomationService {
     }
 
     /// Attempts to run a worker job on the worker thread. Returns `None` if the worker thread does not exist.
-    fn run_worker_job(&self, job: WorkerJob, arguments: Vec<JobArgument>) -> Option<JobResult> {
+    fn run_worker_job(&mut self, job: WorkerJob, arguments: Vec<JobArgument>) -> Option<JobResult> {
+        self.take_pending_results();
+
         let worker_data = self.worker_data.as_ref()?;
         worker_data.sender.send((job, arguments)).unwrap();
         Some(worker_data.receiver.recv().unwrap())
+    }
+
+    /// Hands a job to the worker without waiting for it to finish.
+    ///
+    /// Editing text takes a while on purpose: the worker holds on until the app has taken every
+    /// keystroke, so the lint loop cannot interleave with them. That wait belongs on the worker,
+    /// not on the thread drawing the overlay, which would otherwise freeze until the edit is done
+    /// and make a fix that takes milliseconds feel like it takes half a second.
+    fn dispatch_worker_job(&mut self, job: WorkerJob, arguments: Vec<JobArgument>) {
+        self.take_pending_results();
+
+        let Some(worker_data) = self.worker_data.as_ref() else {
+            return;
+        };
+
+        if worker_data.sender.send((job, arguments)).is_ok() {
+            self.pending_results += 1;
+        }
+    }
+
+    /// Clears the results of jobs nobody waited for, so a later job gets its own result back.
+    fn take_pending_results(&mut self) {
+        while self.pending_results > 0 {
+            let Some(worker_data) = self.worker_data.as_ref() else {
+                self.pending_results = 0;
+                return;
+            };
+
+            if worker_data.receiver.recv().is_err() {
+                self.pending_results = 0;
+                return;
+            }
+
+            self.pending_results -= 1;
+        }
     }
 
     /// Grab text from the worker.
@@ -163,7 +203,7 @@ impl AutomationService {
             suggestion,
         };
 
-        let _ = self.run_worker_job(
+        self.dispatch_worker_job(
             apply_suggestion_job,
             vec![JobArgument::ApplySuggestion(request)],
         );
@@ -188,7 +228,7 @@ impl AutomationService {
             edits,
         };
 
-        let _ = self.run_worker_job(apply_all_job, vec![JobArgument::ApplyAll(request)]);
+        self.dispatch_worker_job(apply_all_job, vec![JobArgument::ApplyAll(request)]);
     }
 
     /// Pass a collection of text spans to the worker and have it compute the associated bounding boxes for each span.

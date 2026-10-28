@@ -181,8 +181,13 @@ impl WindowManagerApp {
 
         self.hovered_lint = match hit_target {
             HitTarget::Lint(index) => Some(index),
+            // Keep the chip's own lint hovered while the pointer is on the chip, so moving to it
+            // does not make it disappear.
+            HitTarget::QuickFix(index) => Some(index),
             HitTarget::Popup | HitTarget::None => None,
         };
+
+        self.render_state.set_hovered_lint(self.hovered_lint);
 
         self.close_popup_on_outside_click(hit_target);
 

@@ -1,12 +1,14 @@
 mod draw_highlight;
 mod popup_layout;
+mod quick_fix;
 mod render_lint_card;
 
 use std::time::Instant;
 
 use egui_commonmark::CommonMarkCache;
-use harper_core::{Document, linting::LintKind};
+use harper_core::{Document, linting::LintKind, linting::Suggestion};
 
+use self::quick_fix::{quick_fix_bounds, quick_fix_label, quick_fix_suggestion, render_quick_fix};
 use self::{
     draw_highlight::draw_highlight,
     popup_layout::{PopupLayout, approach},
@@ -26,6 +28,8 @@ use crate::{
 pub enum HitTarget {
     Lint(usize),
     Popup,
+    /// The one-click fix offered under the lint at this index.
+    QuickFix(usize),
     None,
 }
 
@@ -43,6 +47,9 @@ pub struct RenderState {
 
     /// Index of the suggestion row that the user hovered last in the visible popup.
     shown_suggestion: Option<usize>,
+
+    /// Index of the lint the pointer is on, which is offered a one-click fix.
+    hovered_lint: Option<usize>,
 
     /// The flyout card's drawn offset from the list card's top, in points.
     current_sidebar_position: f32,
@@ -86,6 +93,7 @@ impl RenderState {
             last_lints: None,
             highlighted_lint: None,
             shown_suggestion: None,
+            hovered_lint: None,
             current_sidebar_position: FIRST_ROW_OFFSET,
             last_render: None,
             popup_drag: egui::Vec2::ZERO,
@@ -145,12 +153,59 @@ impl RenderState {
         self.popup_drag = egui::Vec2::ZERO;
     }
 
+    /// Applies a suggestion and drops the lint from the overlay at once.
+    ///
+    /// The edit itself happens in the background, and the next read of the app is a moment away,
+    /// so leaving the highlight up until then makes a fix that already happened look like it is
+    /// still pending.
+    fn apply_and_forget(&mut self, index: usize, suggestion: Suggestion) {
+        if let Some(actionable_lint) = self
+            .last_lints
+            .as_mut()
+            .and_then(|lints| lints.get_mut(index))
+        {
+            actionable_lint.apply_suggestion(suggestion);
+        }
+
+        if let Some(lints) = self.last_lints.as_mut()
+            && index < lints.len()
+        {
+            lints.remove(index);
+        }
+
+        self.hovered_lint = None;
+        self.close_popup();
+    }
+
     /// Centralizes the close behavior so the popup close button only has to clear the selected lint.
     pub fn close_popup(&mut self) {
         self.highlighted_lint = None;
         self.shown_suggestion = None;
         self.current_sidebar_position = FIRST_ROW_OFFSET;
         self.popup_drag = egui::Vec2::ZERO;
+    }
+
+    /// Follows the pointer so the lint under it can offer its top suggestion.
+    pub fn set_hovered_lint(&mut self, hovered_lint: Option<usize>) {
+        self.hovered_lint = hovered_lint.filter(|index| *index < self.lints().len());
+    }
+
+    /// The chip offering a one-click fix, when one is on screen.
+    ///
+    /// There is none while the full popup is open, so the two never overlap.
+    pub fn quick_fix_layout(&self) -> Option<(usize, egui::Rect)> {
+        if self.highlighted_lint.is_some() {
+            return None;
+        }
+
+        let index = self.hovered_lint?;
+        let actionable_lint = self.lints().get(index)?;
+        let suggestion = quick_fix_suggestion(&actionable_lint.lint)?;
+
+        Some((
+            index,
+            quick_fix_bounds(&actionable_lint.rect, &quick_fix_label(suggestion)),
+        ))
     }
 
     /// Checks if a given position touches a hit target.
@@ -160,6 +215,12 @@ impl RenderState {
             .is_some_and(|layout| layout.contains(pos))
         {
             return HitTarget::Popup;
+        }
+
+        if let Some((index, bounds)) = self.quick_fix_layout()
+            && bounds.contains(pos)
+        {
+            return HitTarget::QuickFix(index);
         }
 
         self.lints()
@@ -212,6 +273,19 @@ impl RenderState {
             draw_highlight(ui, &positioned_lint.rect, &positioned_lint.lint, origin);
         }
 
+        if let Some((index, bounds)) = self.quick_fix_layout()
+            && let Some(actionable_lint) = self.lints().get(index)
+            && let Some(suggestion) = quick_fix_suggestion(&actionable_lint.lint)
+        {
+            let lint = actionable_lint.lint.clone();
+            let label = quick_fix_label(suggestion);
+            let suggestion = suggestion.clone();
+
+            if render_quick_fix(ui, bounds.translate(-origin), &lint, &label) {
+                self.apply_and_forget(index, suggestion);
+            }
+        }
+
         if let Some(index) = self.highlighted_lint
             && let Some(positioned_lint) = self.lints().get(index)
         {
@@ -243,15 +317,7 @@ impl RenderState {
                     self.shown_suggestion = Some(suggestion);
                 }
                 Some(LintCardAction::ApplySuggestion(suggestion)) => {
-                    if let Some(actionable_lint) = self
-                        .last_lints
-                        .as_mut()
-                        .and_then(|lints| lints.get_mut(index))
-                    {
-                        actionable_lint.apply_suggestion(suggestion);
-                    }
-
-                    self.close_popup();
+                    self.apply_and_forget(index, suggestion);
                 }
                 Some(LintCardAction::IgnoreLint) => {
                     if let Some((lint, source_text)) =
