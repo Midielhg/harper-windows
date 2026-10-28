@@ -2,6 +2,7 @@ mod draw_highlight;
 mod popup_layout;
 mod quick_fix;
 mod render_lint_card;
+mod review_panel;
 
 use std::time::Instant;
 
@@ -9,6 +10,9 @@ use egui_commonmark::CommonMarkCache;
 use harper_core::{Document, linting::LintKind, linting::Suggestion};
 
 use self::quick_fix::{quick_fix_bounds, quick_fix_label, quick_fix_suggestion, render_quick_fix};
+use self::review_panel::{
+    IDLE_DELAY, ReviewAction, ReviewRow, panel_bounds, render_review_panel, review_rows,
+};
 use self::{
     draw_highlight::draw_highlight,
     popup_layout::{PopupLayout, approach},
@@ -30,6 +34,8 @@ pub enum HitTarget {
     Popup,
     /// The one-click fix offered under the lint at this index.
     QuickFix(usize),
+    /// The list of everything outstanding, shown once typing stops.
+    ReviewPanel,
     None,
 }
 
@@ -50,6 +56,23 @@ pub struct RenderState {
 
     /// Index of the lint the pointer is on, which is offered a one-click fix.
     hovered_lint: Option<usize>,
+
+    /// When the set of lints last changed, which is when the user last typed something that
+    /// mattered. The review panel waits for this to go quiet.
+    lints_changed_at: Instant,
+
+    /// Set when the user closes the panel, so it stays closed until the writing changes again.
+    review_dismissed: bool,
+
+    /// The screen the overlay last drew into, in screen coordinates, used to keep the review
+    /// panel on it. Unknown until the first frame, which is long before the panel can appear.
+    screen_rect: Option<egui::Rect>,
+
+    /// Set when the user asks the panel to take every suggestion, for the event loop to pick up.
+    ///
+    /// Applying them needs the OS broker, which lives a layer above this one, so the request is
+    /// left here rather than acted on during drawing.
+    apply_all_requested: bool,
 
     /// The flyout card's drawn offset from the list card's top, in points.
     current_sidebar_position: f32,
@@ -94,6 +117,10 @@ impl RenderState {
             highlighted_lint: None,
             shown_suggestion: None,
             hovered_lint: None,
+            lints_changed_at: Instant::now(),
+            review_dismissed: false,
+            screen_rect: None,
+            apply_all_requested: false,
             current_sidebar_position: FIRST_ROW_OFFSET,
             last_render: None,
             popup_drag: egui::Vec2::ZERO,
@@ -112,6 +139,13 @@ impl RenderState {
     /// Closes the popup when its lint disappeared, and forgets the shown suggestion when the
     /// refreshed lint has fewer rows.
     pub fn set_lints(&mut self, lints: Vec<ActionableLint>) {
+        // Compare before storing: an identical read means the user has not written anything since
+        // the last one, which is what the review panel is waiting for.
+        if !self.lints_match(&lints) {
+            self.lints_changed_at = Instant::now();
+            self.review_dismissed = false;
+        }
+
         self.last_lints = Some(lints);
 
         if self
@@ -185,6 +219,45 @@ impl RenderState {
         self.popup_drag = egui::Vec2::ZERO;
     }
 
+    /// Whether `lints` says the same as what is already on screen.
+    fn lints_match(&self, lints: &[ActionableLint]) -> bool {
+        let current = self.lints();
+
+        current.len() == lints.len()
+            && current.iter().zip(lints).all(|(current, new)| {
+                current.lint.span == new.lint.span && current.lint.message == new.lint.message
+            })
+    }
+
+    /// The review panel's rows and where it sits, when it should be on screen.
+    ///
+    /// It stays away while a popup is open or the user is still typing, and it needs something to
+    /// offer: a list with nothing actionable in it is just clutter.
+    pub fn review_panel_layout(&self) -> Option<(egui::Rect, Vec<ReviewRow>)> {
+        if self.review_dismissed
+            || self.highlighted_lint.is_some()
+            || self.lints_changed_at.elapsed() < IDLE_DELAY
+        {
+            return None;
+        }
+
+        let rows = review_rows(self.lints());
+
+        if rows.is_empty() {
+            return None;
+        }
+
+        Some((
+            panel_bounds(self.lints(), rows.len(), self.screen_rect),
+            rows,
+        ))
+    }
+
+    /// Takes the pending "fix everything" request, if the user made one.
+    pub fn take_apply_all_request(&mut self) -> bool {
+        std::mem::take(&mut self.apply_all_requested)
+    }
+
     /// Follows the pointer so the lint under it can offer its top suggestion.
     pub fn set_hovered_lint(&mut self, hovered_lint: Option<usize>) {
         self.hovered_lint = hovered_lint.filter(|index| *index < self.lints().len());
@@ -215,6 +288,12 @@ impl RenderState {
             .is_some_and(|layout| layout.contains(pos))
         {
             return HitTarget::Popup;
+        }
+
+        if let Some((bounds, _)) = self.review_panel_layout()
+            && bounds.contains(pos)
+        {
+            return HitTarget::ReviewPanel;
         }
 
         if let Some((index, bounds)) = self.quick_fix_layout()
@@ -251,6 +330,8 @@ impl RenderState {
     ///
     /// Each call also moves the sidebar toward its target by the time since the previous call.
     pub fn render(&mut self, ui: &mut egui::Ui, origin: egui::Vec2) {
+        self.screen_rect = Some(ui.ctx().screen_rect().translate(origin));
+
         let now = Instant::now();
         let time_since_last_render = self
             .last_render
@@ -283,6 +364,22 @@ impl RenderState {
 
             if render_quick_fix(ui, bounds.translate(-origin), &lint, &label) {
                 self.apply_and_forget(index, suggestion);
+            }
+        }
+
+        if let Some((bounds, rows)) = self.review_panel_layout() {
+            let total = self.lints().len();
+
+            match render_review_panel(ui, bounds.translate(-origin), &rows, total) {
+                Some(ReviewAction::ApplyOne(index, suggestion)) => {
+                    self.apply_and_forget(index, suggestion);
+                }
+                Some(ReviewAction::ApplyAll) => {
+                    self.apply_all_requested = true;
+                    self.review_dismissed = true;
+                }
+                Some(ReviewAction::Dismiss) => self.review_dismissed = true,
+                None => {}
             }
         }
 
