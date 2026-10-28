@@ -1,6 +1,7 @@
 use crate::config::Integration;
 use harper_core::{Dialect, IgnoredLints, linting::FlatConfig};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Canonical client-to-server protocol message sent by the highlighter process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +14,7 @@ pub enum Request {
     GetIgnoredLints,
     GetIntegrations,
     GetAutoEnableNewApps,
+    GetTextShortcuts,
     ResolveIntegration { bundle_id: String },
     SetLintConfig { config: FlatConfig },
     IgnoreLint { ignored_lints: IgnoredLints },
@@ -32,6 +34,7 @@ pub enum Response {
     GetIgnoredLints { ignored_lints: IgnoredLints },
     GetIntegrations { integrations: Vec<Integration> },
     GetAutoEnableNewApps { enabled: bool },
+    GetTextShortcuts { shortcuts: BTreeMap<String, String> },
     ResolveIntegration { enabled: bool },
     Ack,
 }

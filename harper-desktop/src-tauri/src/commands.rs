@@ -12,6 +12,7 @@ use harper_core::{
     linting::FlatConfig,
     spell::{Dictionary, MutableDictionary},
 };
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use tauri::ipc::Invoke;
 use tauri::{Manager, Runtime, State};
@@ -22,6 +23,8 @@ pub fn application_message_handler<R: Runtime>() -> impl Fn(Invoke<R>) -> bool {
         get_lint_config,
         get_dialect,
         get_debounce_ms,
+        get_text_shortcuts,
+        set_text_shortcuts,
         set_debounce_ms,
         get_auto_update,
         set_auto_update,
@@ -77,6 +80,28 @@ async fn set_debounce_ms(
 ) -> Result<(), String> {
     let mut config = config.lock().await;
     config.debounce_ms = debounce_ms;
+    config
+        .save_to_system()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_text_shortcuts(
+    config: State<'_, Arc<Mutex<Config>>>,
+) -> Result<BTreeMap<String, String>, String> {
+    Ok(config.lock().await.text_shortcuts.clone())
+}
+
+#[tauri::command]
+async fn set_text_shortcuts(
+    shortcuts: BTreeMap<String, String>,
+    config: State<'_, Arc<Mutex<Config>>>,
+) -> Result<(), String> {
+    let mut config = config.lock().await;
+    config.text_shortcuts = shortcuts;
     config
         .save_to_system()
         .await

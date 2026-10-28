@@ -93,6 +93,15 @@ export class Client {
 		await invoke('set_debounce_ms', { debounceMs });
 	}
 
+	/** The abbreviations the user types and the longer text each stands for. */
+	static async getTextShortcuts(): Promise<Record<string, string>> {
+		return await invoke<Record<string, string>>('get_text_shortcuts');
+	}
+
+	static async setTextShortcuts(shortcuts: Record<string, string>): Promise<void> {
+		await invoke('set_text_shortcuts', { shortcuts });
+	}
+
 	/** Check if the app is configured to auto update. */
 	static async getAutoUpdate(): Promise<boolean> {
 		return await invoke<boolean>('get_auto_update');

@@ -1,6 +1,7 @@
 use harper_core::{
     Dialect, DictWordMetadata, IgnoredLints, linting::FlatConfig, spell::MutableDictionary,
 };
+use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader, Stdin, Stdout},
@@ -75,6 +76,15 @@ where
             Response::GetDebounceMs { debounce_ms } => Ok(debounce_ms),
             _ => Err(ProtocolError::UnexpectedResponse {
                 expected: "GetDebounceMs",
+            }),
+        }
+    }
+
+    pub async fn get_text_shortcuts(&mut self) -> Result<BTreeMap<String, String>, ProtocolError> {
+        match self.send_request(Request::GetTextShortcuts).await? {
+            Response::GetTextShortcuts { shortcuts } => Ok(shortcuts),
+            _ => Err(ProtocolError::UnexpectedResponse {
+                expected: "GetTextShortcuts",
             }),
         }
     }

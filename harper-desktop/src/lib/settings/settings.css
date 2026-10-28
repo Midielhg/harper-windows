@@ -1007,3 +1007,60 @@ em,
 		gap: 14px;
 	}
 }
+
+/* Text shortcuts: the short form the user types, and what Harper offers in its place. */
+.text-shortcut-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.text-shortcut-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.text-shortcut-input {
+	flex: 1 1 0;
+	min-width: 0;
+	padding: 6px 10px;
+	border: 1px solid var(--border, #d0d7de);
+	border-radius: 6px;
+	background: var(--input-background, #fff);
+	color: inherit;
+	font: inherit;
+}
+
+/* The short form is by nature short, so it does not need to take half the row. */
+.text-shortcut-input.abbreviation {
+	flex: 0 0 96px;
+}
+
+.text-shortcut-arrow {
+	opacity: 0.6;
+}
+
+.text-shortcut-remove,
+.text-shortcut-add {
+	padding: 6px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	font: inherit;
+}
+
+.text-shortcut-remove {
+	opacity: 0.7;
+}
+
+.text-shortcut-remove:hover,
+.text-shortcut-add:hover {
+	background: var(--hover-background, #f3f4f6);
+	opacity: 1;
+}
+
+.text-shortcut-error {
+	margin-top: 8px;
+	color: var(--error, #b42318);
+}

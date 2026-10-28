@@ -8,6 +8,10 @@ mod windows;
 use self::debug_broker::DebugBroker;
 use self::highlighter::Highlighter;
 use self::highlighter_service::HighlighterService;
+use self::text_shortcuts::TextShortcuts;
+
+/// The rule id shortcut expansions are grouped under, so they can be ignored like any other rule.
+const TEXT_SHORTCUTS_RULE: &str = "TextShortcuts";
 use self::tray::set_up_tray_menu;
 use crate::args::{Args, Command};
 use crate::communication::{Client, ProtocolError};
@@ -16,7 +20,7 @@ use crate::debounce::{DebounceState, DebounceStatus};
 use clap::Parser;
 use harper_core::{
     Dialect, DictWordMetadata, Document, IgnoredLints,
-    linting::{Lint, LintGroup},
+    linting::{Lint, LintGroup, Linter},
     spell::MutableDictionary,
 };
 use serde::Serialize;
@@ -50,6 +54,7 @@ pub mod highlighter_service;
 pub mod lint_kind_color;
 mod os_broker;
 pub mod rect;
+pub mod text_shortcuts;
 
 #[cfg(target_os = "macos")]
 mod mac_broker;
@@ -277,6 +282,9 @@ pub fn run_highlighter(has_parent: bool) {
     }));
     let debounce_ms = Rc::new(RefCell::new(startup_config.debounce_ms));
     let linter = Rc::new(RefCell::new(startup_linter));
+    let text_shortcuts = Rc::new(RefCell::new(TextShortcuts::new(
+        &startup_config.text_shortcuts,
+    )));
 
     let integration_client = client.clone();
     let integration_runtime = sync_runtime.clone();
@@ -301,6 +309,7 @@ pub fn run_highlighter(has_parent: bool) {
 
     let lint_ignored_lints = ignored_lints.clone();
     let lint_linter = linter.clone();
+    let lint_text_shortcuts = text_shortcuts.clone();
     let lint_user_dictionary = user_dictionary.clone();
     let lint_debounce_ms = debounce_ms.clone();
     let lint_debounce_state = Rc::new(RefCell::new(DebounceState::default()));
@@ -330,7 +339,15 @@ pub fn run_highlighter(has_parent: bool) {
     let refresh_dialect = dialect.clone();
     let refresh_integrations = integrations.clone();
     let refresh_debounce_ms = debounce_ms.clone();
-    let refresh_linter = linter.clone();
+    let refresh_state = HighlighterState {
+        ignored_lints: refresh_ignored_lints,
+        user_dictionary: refresh_user_dictionary,
+        dialect: refresh_dialect,
+        integrations: refresh_integrations,
+        debounce_ms: refresh_debounce_ms,
+        linter: linter.clone(),
+        text_shortcuts: text_shortcuts.clone(),
+    };
 
     let lint_text = move |text: &str| {
         let debounce_ms = *lint_debounce_ms.borrow();
@@ -345,6 +362,11 @@ pub fn run_highlighter(has_parent: bool) {
             Config::dictionary_from_user_dictionary(lint_user_dictionary.borrow().clone());
         let doc = Document::new_markdown_default(text, &dictionary);
         let mut organized_lints = lint_linter.borrow_mut().organized_lints(&doc);
+
+        let shortcut_lints = lint_text_shortcuts.borrow_mut().lint(&doc);
+        if !shortcut_lints.is_empty() {
+            organized_lints.insert(TEXT_SHORTCUTS_RULE.to_string(), shortcut_lints);
+        }
 
         for lints in organized_lints.values_mut() {
             lint_ignored_lints.borrow().remove_ignored(lints, &doc);
@@ -391,6 +413,7 @@ pub fn run_highlighter(has_parent: bool) {
             auto_update: true,
             last_update_check: None,
             highlighter_service_enabled: true,
+            text_shortcuts: BTreeMap::new(),
         };
         *dictionary_linter.borrow_mut() = config.create_linter();
 
@@ -439,15 +462,7 @@ pub fn run_highlighter(has_parent: bool) {
             &mut refresh_client.lock().expect("IPC client lock poisoned"),
             &refresh_runtime,
         ) {
-            Ok(config) => apply_highlighter_config(
-                config,
-                &refresh_ignored_lints,
-                &refresh_user_dictionary,
-                &refresh_dialect,
-                &refresh_integrations,
-                &refresh_debounce_ms,
-                &refresh_linter,
-            ),
+            Ok(config) => apply_highlighter_config(config, &refresh_state),
             Err(error) => {
                 eprintln!("failed to refresh highlighter config: {error}");
                 std::process::exit(1);
@@ -522,6 +537,7 @@ fn fetch_highlighter_config(
         let integrations = client.get_integrations().await?;
         let auto_enable_new_apps = client.get_auto_enable_new_apps().await?;
         let debounce_ms = client.get_debounce_ms().await?;
+        let text_shortcuts = client.get_text_shortcuts().await?;
 
         Ok(Config {
             dialect,
@@ -535,19 +551,36 @@ fn fetch_highlighter_config(
             auto_update: true,
             last_update_check: None,
             highlighter_service_enabled: true,
+            text_shortcuts,
         })
     })
 }
 
-fn apply_highlighter_config(
-    config: Config,
-    ignored_lints: &Rc<RefCell<IgnoredLints>>,
-    user_dictionary: &Rc<RefCell<MutableDictionary>>,
-    dialect: &Rc<RefCell<Dialect>>,
-    integrations: &Arc<StdMutex<IntegrationState>>,
-    debounce_ms: &Rc<RefCell<u64>>,
-    linter: &Rc<RefCell<LintGroup>>,
-) {
+/// The highlighter's live copy of everything settings can change.
+///
+/// Held together rather than passed around one piece at a time, because every one of them is
+/// replaced from the same refreshed config.
+struct HighlighterState {
+    ignored_lints: Rc<RefCell<IgnoredLints>>,
+    user_dictionary: Rc<RefCell<MutableDictionary>>,
+    dialect: Rc<RefCell<Dialect>>,
+    integrations: Arc<StdMutex<IntegrationState>>,
+    debounce_ms: Rc<RefCell<u64>>,
+    linter: Rc<RefCell<LintGroup>>,
+    text_shortcuts: Rc<RefCell<TextShortcuts>>,
+}
+
+fn apply_highlighter_config(config: Config, state: &HighlighterState) {
+    let HighlighterState {
+        ignored_lints,
+        user_dictionary,
+        dialect,
+        integrations,
+        debounce_ms,
+        linter,
+        text_shortcuts,
+    } = state;
+
     if config.mutable_dictionary != *user_dictionary.borrow()
         || config.dialect != *dialect.borrow()
         || config.lint_config != linter.borrow().config
@@ -567,4 +600,5 @@ fn apply_highlighter_config(
         Err(error) => eprintln!("failed to update integrations: {error}"),
     }
     *debounce_ms.borrow_mut() = config.debounce_ms;
+    *text_shortcuts.borrow_mut() = TextShortcuts::new(&config.text_shortcuts);
 }

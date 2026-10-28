@@ -11,7 +11,7 @@ use harper_core::{
 use harper_dictionary_wordlist::{load_dict, save_dict};
 pub use integration::Integration;
 use serde::de::{DeserializeOwned, Error as _};
-use std::{fs, io, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, fs, io, path::PathBuf, sync::Arc};
 
 /// User-controlled app state needed by Tauri commands and the highlighter process.
 pub struct Config {
@@ -29,6 +29,8 @@ pub struct Config {
     /// Failed attempts also count toward the automatic 24-hour interval.
     pub last_update_check: Option<u64>,
     pub highlighter_service_enabled: bool,
+    /// Abbreviations the user types and the longer text each stands for, such as `wo` -> `without`.
+    pub text_shortcuts: BTreeMap<String, String>,
 }
 
 impl Config {
@@ -48,6 +50,7 @@ impl Config {
             auto_update: true,
             last_update_check: None,
             highlighter_service_enabled: true,
+            text_shortcuts: BTreeMap::new(),
         }
     }
 
@@ -201,6 +204,7 @@ impl Config {
             "auto_update": self.auto_update,
             "last_update_check": self.last_update_check,
             "highlighter_service_enabled": self.highlighter_service_enabled,
+            "text_shortcuts": &self.text_shortcuts,
         }))
     }
 
@@ -234,6 +238,8 @@ impl Config {
                 "highlighter_service_enabled",
             )?
             .unwrap_or(true),
+            text_shortcuts: deserialize_optional_field(object, "text_shortcuts")?
+                .unwrap_or_default(),
         })
     }
 }

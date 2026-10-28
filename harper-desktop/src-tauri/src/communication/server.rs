@@ -72,6 +72,9 @@ where
             Request::GetAutoEnableNewApps => Response::GetAutoEnableNewApps {
                 enabled: self.config.lock().await.auto_enable_new_apps,
             },
+            Request::GetTextShortcuts => Response::GetTextShortcuts {
+                shortcuts: self.config.lock().await.text_shortcuts.clone(),
+            },
             Request::ResolveIntegration { bundle_id } => {
                 let mut config = self.config.lock().await;
                 let previous_len = config.integrations.len();
