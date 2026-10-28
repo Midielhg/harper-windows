@@ -39,12 +39,38 @@ mod automation_service;
 /// nothing in practice: it is roughly the gap after finishing a word.
 const TEXT_SETTLE: Duration = Duration::from_millis(350);
 
+/// The shortest gap between two reads of the focused app.
+///
+/// Reading is a cross-process accessibility call that the target app answers on the thread it also
+/// takes keystrokes on, so the overlay asking as fast as it can is felt as the app typing slowly.
+/// The loop used to be paced only by how long each read took, which meant the busier the app was,
+/// the harder Harper leaned on it. A fixed gap puts a ceiling on that, and six reads a second is
+/// still far quicker than anyone notices.
+const READ_INTERVAL: Duration = Duration::from_millis(160);
+
+/// How much of the target app's time Harper is willing to take, as a divisor.
+///
+/// A read is served by the app's own UI thread, so a read that takes 100ms is 100ms that thread
+/// cannot spend on the keystroke waiting behind it. Spacing the next read at this multiple of the
+/// last one's cost keeps Harper to roughly a quarter of that thread no matter how slow the app is,
+/// which is why a heavy editor no longer gets hammered the hardest.
+const READ_DUTY_DIVISOR: u32 = 4;
+
 pub struct WindowsBroker {
     service: Arc<Mutex<AutomationService>>,
     is_integration_enabled: Box<dyn FnMut(&str) -> bool + Send + Sync>,
     /// The text seen at the last read, and when it last differed from the read before it.
     last_text: Option<String>,
     last_text_change: Option<Instant>,
+    /// When the last read of the focused app started, used to keep the reads spaced out.
+    last_read: Option<Instant>,
+    /// How long that read took, which sets how long to leave the app alone afterwards.
+    last_read_cost: Duration,
+    /// The text that was last linted, and what linting it produced.
+    ///
+    /// Lints depend on nothing but the text, so re-running them on text that has not changed is
+    /// pure waste — and it was running several times a second for as long as a window stayed open.
+    cached_lints: Option<(String, BTreeMap<String, Vec<Lint>>)>,
 }
 
 impl WindowsBroker {
@@ -56,6 +82,9 @@ impl WindowsBroker {
             is_integration_enabled: Box::new(is_integration_enabled),
             last_text: None,
             last_text_change: None,
+            last_read: None,
+            last_read_cost: Duration::ZERO,
+            cached_lints: None,
         }
     }
 
@@ -112,62 +141,22 @@ impl OsBroker for WindowsBroker {
         &mut self,
         lint_text: &mut dyn FnMut(&str) -> BTreeMap<String, Vec<Lint>>,
     ) -> Option<Vec<ActionableLint>> {
-        match self.should_lint_focused_window() {
-            Some(true) => {}
-            Some(false) => return Some(Vec::new()),
-            None => return None,
-        }
+        let interval = READ_INTERVAL.max(self.last_read_cost * READ_DUTY_DIVISOR);
 
-        let text = self.service.lock().ok()?.get_text()?;
-        if text.len() > 16_000 {
-            return Some(Vec::new());
-        }
-
-        if !self.text_has_settled(&text) {
-            // Returning nothing leaves the highlights from the previous read on screen, so they
-            // stay put while the user is typing instead of flickering, and are brought back into
-            // step as soon as there is a pause.
+        if self
+            .last_read
+            .is_some_and(|last_read| last_read.elapsed() < interval)
+        {
             return None;
         }
 
-        let lints = lint_text(&text);
-        let rects = self
-            .service
-            .lock()
-            .ok()?
-            .get_bounding_boxes(&text, lints.values().flatten().map(|lint| lint.span))?;
+        let read_started = Instant::now();
+        self.last_read = Some(read_started);
 
-        Some(
-            lints
-                .into_iter()
-                .flat_map(|(lint_id, lints)| {
-                    lints.into_iter().map(move |lint| (lint_id.clone(), lint))
-                })
-                .zip(rects)
-                .flat_map(|((lint_id, lint), rects)| {
-                    let text = text.clone();
-                    let service = self.service.clone();
-                    rects.into_iter().map(move |rect| {
-                        let service = service.clone();
-                        let suggestion_text = text.clone();
-                        let suggestion_span = lint.span;
-                        ActionableLint::new(
-                            rect,
-                            lint_id.clone(),
-                            lint.clone(),
-                            text.clone(),
-                            move |suggestion| {
-                                service.lock().unwrap().apply_suggestion(
-                                    suggestion_text,
-                                    suggestion_span,
-                                    suggestion,
-                                );
-                            },
-                        )
-                    })
-                })
-                .collect(),
-        )
+        let boxes = self.read_boxes(lint_text);
+        self.last_read_cost = read_started.elapsed();
+
+        boxes
     }
 
     fn cursor_position(&self) -> Option<Pos2> {
@@ -395,5 +384,81 @@ pub fn get_window_path(window_id: isize) -> WindowsResult<PathBuf> {
         Ok(PathBuf::from(OsString::from_wide(
             &buffer[..length as usize],
         )))
+    }
+}
+
+impl WindowsBroker {
+    /// Reads the focused app and turns what it finds into placed lints.
+    ///
+    /// Split out from `get_boxes` so the whole read is timed on every path out of it, including
+    /// the ones that give up early.
+    fn read_boxes(
+        &mut self,
+        lint_text: &mut dyn FnMut(&str) -> BTreeMap<String, Vec<Lint>>,
+    ) -> Option<Vec<ActionableLint>> {
+        match self.should_lint_focused_window() {
+            Some(true) => {}
+            Some(false) => return Some(Vec::new()),
+            None => return None,
+        }
+
+        let text = self.service.lock().ok()?.get_text()?;
+        if text.len() > 16_000 {
+            return Some(Vec::new());
+        }
+
+        if !self.text_has_settled(&text) {
+            // Returning nothing leaves the highlights from the previous read on screen, so they
+            // stay put while the user is typing instead of flickering, and are brought back into
+            // step as soon as there is a pause.
+            return None;
+        }
+
+        let lints = match &self.cached_lints {
+            Some((linted_text, lints)) if *linted_text == text => lints.clone(),
+            _ => {
+                let lints = lint_text(&text);
+                self.cached_lints = Some((text.clone(), lints.clone()));
+
+                lints
+            }
+        };
+        let rects = self
+            .service
+            .lock()
+            .ok()?
+            .get_bounding_boxes(&text, lints.values().flatten().map(|lint| lint.span))?;
+
+        Some(
+            lints
+                .into_iter()
+                .flat_map(|(lint_id, lints)| {
+                    lints.into_iter().map(move |lint| (lint_id.clone(), lint))
+                })
+                .zip(rects)
+                .flat_map(|((lint_id, lint), rects)| {
+                    let text = text.clone();
+                    let service = self.service.clone();
+                    rects.into_iter().map(move |rect| {
+                        let service = service.clone();
+                        let suggestion_text = text.clone();
+                        let suggestion_span = lint.span;
+                        ActionableLint::new(
+                            rect,
+                            lint_id.clone(),
+                            lint.clone(),
+                            text.clone(),
+                            move |suggestion| {
+                                service.lock().unwrap().apply_suggestion(
+                                    suggestion_text,
+                                    suggestion_span,
+                                    suggestion,
+                                );
+                            },
+                        )
+                    })
+                })
+                .collect(),
+        )
     }
 }

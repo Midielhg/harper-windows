@@ -21,6 +21,9 @@ use crate::rect::ActionableLint;
 
 const CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How long the event loop sleeps between passes when nothing has woken it.
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
+
 /// Owns the winit event loop and the overlay windows created for each monitor.
 ///
 /// `WindowManager` is intentionally separate from `Highlighter` because winit event-loop ownership
@@ -95,7 +98,6 @@ impl WindowManager {
             },
         );
 
-        // Run continuously without a read timer; VSync presentation provides backpressure.
         self.event_loop.set_control_flow(ControlFlow::Poll);
         let result = self.event_loop.run_app(&mut app);
 
@@ -184,7 +186,7 @@ impl WindowManagerApp {
             // Keep the chip's own lint hovered while the pointer is on the chip, so moving to it
             // does not make it disappear.
             HitTarget::QuickFix(index) => Some(index),
-            HitTarget::Popup | HitTarget::None => None,
+            HitTarget::Popup | HitTarget::ReviewPanel | HitTarget::None => None,
         };
 
         self.render_state.set_hovered_lint(self.hovered_lint);
@@ -217,7 +219,9 @@ impl WindowManagerApp {
         self.fix_all_hotkey
             .set_popup_open(self.render_state.popup_layout().is_some());
 
-        if !self.fix_all_hotkey.take_request() {
+        let asked_by_panel = self.render_state.take_apply_all_request();
+
+        if !self.fix_all_hotkey.take_request() && !asked_by_panel {
             return;
         }
 
@@ -303,6 +307,11 @@ impl ApplicationHandler for WindowManagerApp {
 
         self.update_cursor_hittest(event_loop);
         self.apply_all_if_requested();
+
+        // Sleep until the next frame instead of spinning. The reads this loop drives are spaced
+        // out by the broker, so without a wait the loop just burned a core asking for work that
+        // was not due yet.
+        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_INTERVAL));
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
