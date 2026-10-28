@@ -8,6 +8,7 @@ mod windows;
 use self::debug_broker::DebugBroker;
 use self::highlighter::Highlighter;
 use self::highlighter_service::HighlighterService;
+use self::file_extensions::remove_file_extension_lints;
 use self::text_shortcuts::TextShortcuts;
 
 /// The rule id shortcut expansions are grouped under, so they can be ignored like any other rule.
@@ -54,6 +55,7 @@ pub mod highlighter_service;
 pub mod lint_kind_color;
 mod os_broker;
 pub mod rect;
+pub mod file_extensions;
 pub mod text_shortcuts;
 
 #[cfg(target_os = "macos")]
@@ -370,6 +372,7 @@ pub fn run_highlighter(has_parent: bool) {
 
         for lints in organized_lints.values_mut() {
             lint_ignored_lints.borrow().remove_ignored(lints, &doc);
+            remove_file_extension_lints(lints, doc.get_source());
         }
 
         debounce_state.store_lints(text, debounce_ms, &organized_lints);
