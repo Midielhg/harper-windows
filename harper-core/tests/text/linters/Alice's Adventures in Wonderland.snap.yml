@@ -464,11 +464,9 @@ Lint:    Spelling (63 priority)
 Message: |
      229 | “If you please, sir—” The Rabbit started violently, dropped the white kid gloves
      230 | and the fan, and skurried away into the darkness as hard as he could go.
-         |                  ^~~~~~~~ Did you mean to spell `skurried` this way?
+         |                  ^~~~~~~~ Did you mean `scurried`?
 Suggest:
   - Replace with: “scurried”
-  - Replace with: “spurred”
-  - Replace with: “scurries”
 
 
 
@@ -706,7 +704,6 @@ Message: |
 Suggest:
   - Replace with: “dragged”
   - Replace with: “drugged”
-  - Replace with: “dangled”
 
 
 
@@ -2104,11 +2101,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1985 | “’Tis so,” said the Duchess: “and the moral of that is—‘Oh, ’tis love, ’tis
-         |   ^~~ Did you mean to spell `Tis` this way?
+         |   ^~~ Did you mean `This`?
 Suggest:
   - Replace with: “This”
-  - Replace with: “T's”
-  - Replace with: “Ti's”
 
 
 
@@ -2120,7 +2115,6 @@ Message: |
 Suggest:
   - Replace with: “this”
   - Replace with: “ti's”
-  - Replace with: “tic”
 
 
 
@@ -2132,7 +2126,6 @@ Message: |
 Suggest:
   - Replace with: “this”
   - Replace with: “ti's”
-  - Replace with: “tic”
 
 
 
@@ -2750,11 +2743,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     2418 | “Stand up and repeat ‘’Tis the voice of the sluggard,’” said the Gryphon.
-         |                        ^~~ Did you mean to spell `Tis` this way?
+         |                        ^~~ Did you mean `This`?
 Suggest:
   - Replace with: “This”
-  - Replace with: “T's”
-  - Replace with: “Ti's”
 
 
 
@@ -2777,11 +2768,9 @@ Message: |
 Lint:    Spelling (63 priority)
 Message: |
     2425 | > “’Tis the voice of the Lobster; I heard him declare, “You have baked me too
-         |     ^~~ Did you mean to spell `Tis` this way?
+         |     ^~~ Did you mean `This`?
 Suggest:
   - Replace with: “This”
-  - Replace with: “T's”
-  - Replace with: “Ti's”
 
 
 

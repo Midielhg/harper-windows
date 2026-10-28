@@ -1,10 +1,9 @@
 Lint:    Spelling (63 priority)
 Message: |
        7 | My favourite color is blu.
-         |    ^~~~~~~~~ Did you mean to spell `favourite` this way?
+         |    ^~~~~~~~~ Did you mean `favorite`?
 Suggest:
   - Replace with: “favorite”
-  - Replace with: “favorites”
 
 
 
@@ -31,22 +30,18 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
        8 | I must defend my honour!
-         |                  ^~~~~~ Did you mean to spell `honour` this way?
+         |                  ^~~~~~ Did you mean `honor`?
 Suggest:
   - Replace with: “honor”
-  - Replace with: “hour”
-  - Replace with: “honer”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
        9 | I recognize that you recognise me.
-         |                      ^~~~~~~~~ Did you mean to spell `recognise` this way?
+         |                      ^~~~~~~~~ Did you mean `recognize`?
 Suggest:
   - Replace with: “recognize”
-  - Replace with: “recognized”
-  - Replace with: “recognizer”
 
 
 
@@ -64,44 +59,36 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
       11 | I analyse how you infantilise me.
-         |                   ^~~~~~~~~~~ Did you mean to spell `infantilise` this way?
+         |                   ^~~~~~~~~~~ Did you mean `infantilize`?
 Suggest:
   - Replace with: “infantilize”
-  - Replace with: “infantile”
-  - Replace with: “infanticide”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
       12 | Careful, traveller!
-         |          ^~~~~~~~~ Did you mean to spell `traveller` this way?
+         |          ^~~~~~~~~ Did you mean `traveler`?
 Suggest:
   - Replace with: “traveler”
-  - Replace with: “traveled”
-  - Replace with: “travelers”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
       13 | At the centre of the theatre I dropped a litre of coke.
-         |        ^~~~~~ Did you mean to spell `centre` this way?
+         |        ^~~~~~ Did you mean `center`?
 Suggest:
   - Replace with: “center”
-  - Replace with: “cent's”
-  - Replace with: “censure”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
       13 | At the centre of the theatre I dropped a litre of coke.
-         |                      ^~~~~~~ Did you mean to spell `theatre` this way?
+         |                      ^~~~~~~ Did you mean `theater`?
 Suggest:
   - Replace with: “theater”
-  - Replace with: “they're”
-  - Replace with: “there”
 
 
 
@@ -112,7 +99,6 @@ Message: |
 Suggest:
   - Replace with: “liter”
   - Replace with: “lithe”
-  - Replace with: “lire”
 
 
 

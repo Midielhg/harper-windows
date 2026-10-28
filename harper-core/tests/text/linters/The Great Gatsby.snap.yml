@@ -181,12 +181,10 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
       61 | restless. Instead of being the warm centre of the world, the Middle West now
-         |                                     ^~~~~~ Did you mean to spell `centre` this way?
+         |                                     ^~~~~~ Did you mean `center`?
       62 | seemed like the ragged edge of the universe—so I decided to go East and learn
 Suggest:
   - Replace with: “center”
-  - Replace with: “cent's”
-  - Replace with: “censure”
 
 
 
@@ -338,10 +336,9 @@ Message: |
 Lint:    Spelling (63 priority)
 Message: |
      131 | drove over there to have dinner with the Tom Buchanans. Daisy was my second
-         |                                              ^~~~~~~~~ Did you mean to spell `Buchanans` this way?
+         |                                              ^~~~~~~~~ Did you mean `Buchanan's`?
 Suggest:
   - Replace with: “Buchanan's”
-  - Replace with: “Buchanan”
 
 
 
@@ -554,11 +551,9 @@ Message: |
 Lint:    Spelling (63 priority)
 Message: |
      464 | “It couldn’t be helped!” cried Daisy with tense gayety.
-         |                                                 ^~~~~~ Did you mean to spell `gayety` this way?
+         |                                                 ^~~~~~ Did you mean `gaiety`?
 Suggest:
   - Replace with: “gaiety”
-  - Replace with: “gamely”
-  - Replace with: “gamete”
 
 
 
@@ -576,10 +571,9 @@ Lint:    Spelling (63 priority)
 Message: |
      479 | thinking, but I doubt if even Miss Baker, who seemed to have mastered a certain
      480 | hardy scepticism, was able utterly to put this fifth guest’s shrill metallic
-         |       ^~~~~~~~~~ Did you mean to spell `scepticism` this way?
+         |       ^~~~~~~~~~ Did you mean `skepticism`?
 Suggest:
   - Replace with: “skepticism”
-  - Replace with: “asceticism”
 
 
 
@@ -924,7 +918,6 @@ Message: |
 Suggest:
   - Replace with: “smoldering”
   - Replace with: “shouldering”
-  - Replace with: “soldering”
 
 
 
@@ -993,11 +986,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
      838 | “I’m going to have the McKees come up,” she announced as we rose in the
-         |                        ^~~~~~ Did you mean to spell `McKees` this way?
+         |                        ^~~~~~ Did you mean `McKee's`?
 Suggest:
   - Replace with: “McKee's”
-  - Replace with: “McKee”
-  - Replace with: “McGee's”
 
 
 
@@ -1082,22 +1073,18 @@ Lint:    Spelling (63 priority)
 Message: |
      923 | “I should change the light,” he said after a moment. “I’d like to bring out the
      924 | modelling of the features. And I’d try to get hold of all the back hair.”
-         | ^~~~~~~~~ Did you mean to spell `modelling` this way?
+         | ^~~~~~~~~ Did you mean `modeling`?
 Suggest:
   - Replace with: “modeling”
-  - Replace with: “modelings”
-  - Replace with: “yodeling”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
      931 | “You McKees have something to drink,” he said. “Get some more ice and mineral
-         |      ^~~~~~ Did you mean to spell `McKees` this way?
+         |      ^~~~~~ Did you mean `McKee's`?
 Suggest:
   - Replace with: “McKee's”
-  - Replace with: “McKee”
-  - Replace with: “McGee's”
 
 
 
@@ -1429,12 +1416,10 @@ Lint:    Spelling (63 priority)
 Message: |
     1202 | confident girls who weave here and there among the stouter and more stable,
     1203 | become for a sharp, joyous moment the centre of a group, and then, excited with
-         |                                       ^~~~~~ Did you mean to spell `centre` this way?
+         |                                       ^~~~~~ Did you mean `center`?
     1204 | triumph, glide on through the sea-change of faces and voices and color under the
 Suggest:
   - Replace with: “center”
-  - Replace with: “cent's”
-  - Replace with: “censure”
 
 
 
@@ -1522,22 +1507,18 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1310 | “I don’t think it’s so much that,” argued Lucille sceptically; “it’s more that
-         |                                                   ^~~~~~~~~~~ Did you mean to spell `sceptically` this way?
+         |                                                   ^~~~~~~~~~~ Did you mean `skeptically`?
 Suggest:
   - Replace with: “skeptically”
-  - Replace with: “scenically”
-  - Replace with: “ascetically”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     1336 | West Egg, and carefully on guard against its spectroscopic gayety.
-         |                                                            ^~~~~~ Did you mean to spell `gayety` this way?
+         |                                                            ^~~~~~ Did you mean `gaiety`?
 Suggest:
   - Replace with: “gaiety”
-  - Replace with: “gamely”
-  - Replace with: “gamete”
 
 
 
@@ -1545,21 +1526,18 @@ Lint:    Spelling (63 priority)
 Message: |
     1347 | chance we tried an important-looking door, and walked into a high Gothic
     1348 | library, panelled with carved English oak, and probably transported complete
-         |          ^~~~~~~~ Did you mean to spell `panelled` this way?
+         |          ^~~~~~~~ Did you mean `paneled`?
 Suggest:
   - Replace with: “paneled”
-  - Replace with: “palled”
-  - Replace with: “Janelle”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     1373 | Taking our scepticism for granted, he rushed to the bookcases and returned with
-         |            ^~~~~~~~~~ Did you mean to spell `scepticism` this way?
+         |            ^~~~~~~~~~ Did you mean `skepticism`?
 Suggest:
   - Replace with: “skepticism”
-  - Replace with: “asceticism”
 
 
 
@@ -1571,7 +1549,6 @@ Message: |
 Suggest:
   - Replace with: “Standard”
   - Replace with: “Stoppard”
-  - Replace with: “Goddard”
 
 
 
@@ -1604,7 +1581,6 @@ Message: |
 Suggest:
   - Replace with: “fellas”
   - Replace with: “fell's”
-  - Replace with: “Bella's”
 
 
 
@@ -1660,7 +1636,6 @@ Message: |
 Suggest:
   - Replace with: “banjo's”
   - Replace with: “banjos”
-  - Replace with: “bandies”
 
 
 
@@ -1780,7 +1755,6 @@ Message: |
 Suggest:
   - Replace with: “puppy's”
   - Replace with: “purplish”
-  - Replace with: “uppish”
 
 
 
@@ -1926,11 +1900,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1710 | “Wonder’ff tell me where there’s a gas’line station?”
-         |                                    ^~~~~~~~ Did you mean to spell `gas’line` this way?
+         |                                    ^~~~~~~~ Did you mean `gasoline`?
 Suggest:
   - Replace with: “gasoline”
-  - Replace with: “baseline”
-  - Replace with: “Vaseline”
 
 
 
@@ -1975,24 +1947,20 @@ Lint:    Spelling (63 priority)
 Message: |
     1764 | Again at eight o’clock, when the dark lanes of the Forties were lined five deep
     1765 | with throbbing taxicabs, bound for the theatre district, I felt a sinking in my
-         |                                        ^~~~~~~ Did you mean to spell `theatre` this way?
+         |                                        ^~~~~~~ Did you mean `theater`?
     1766 | heart. Forms leaned together in the taxis as they waited, and voices sang, and
 Suggest:
   - Replace with: “theater”
-  - Replace with: “they're”
-  - Replace with: “there”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     1768 | unintelligible circles inside. Imagining that I, too, was hurrying toward gayety
-         |                                                                           ^~~~~~ Did you mean to spell `gayety` this way?
+         |                                                                           ^~~~~~ Did you mean `gaiety`?
     1769 | and sharing their intimate excitement, I wished them well.
 Suggest:
   - Replace with: “gaiety”
-  - Replace with: “gamely”
-  - Replace with: “gamete”
 
 
 
@@ -2085,34 +2053,29 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1848 | From East Egg, then, came the Chester Beckers and the Leeches, and a man named
-         |                                       ^~~~~~~ Did you mean to spell `Beckers` this way?
+         |                                       ^~~~~~~ Did you mean `Becker's`?
     1849 | Bunsen, whom I knew at Yale, and Doctor Webster Civet, who was drowned last
 Suggest:
   - Replace with: “Becker's”
-  - Replace with: “Backers”
-  - Replace with: “Beakers”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     1850 | summer up in Maine. And the Hornbeams and the Willie Voltaires, and a whole clan
-         |                             ^~~~~~~~~ Did you mean to spell `Hornbeams` this way?
+         |                             ^~~~~~~~~ Did you mean `Hornbeam`?
 Suggest:
   - Replace with: “Hornbeam”
-  - Replace with: “Moonbeams”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     1850 | summer up in Maine. And the Hornbeams and the Willie Voltaires, and a whole clan
-         |                                                      ^~~~~~~~~ Did you mean to spell `Voltaires` this way?
+         |                                                      ^~~~~~~~~ Did you mean `Voltaire's`?
     1851 | named Blackbuck, who always gathered in a corner and flipped up their noses like
 Suggest:
   - Replace with: “Voltaire's”
-  - Replace with: “Voltaire”
-  - Replace with: “Voltages”
 
 
 
@@ -2253,11 +2216,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1859 | Stonewall Jackson Abrams of Georgia, and the Fishguards and the Ripley Snells.
-         |                                                                        ^~~~~~ Did you mean to spell `Snells` this way?
+         |                                                                        ^~~~~~ Did you mean `Snell's`?
 Suggest:
   - Replace with: “Snell's”
-  - Replace with: “Sells”
-  - Replace with: “Shells”
 
 
 
@@ -2344,12 +2305,10 @@ Message: |
 Lint:    Spelling (63 priority)
 Message: |
     1866 | From West Egg came the Poles and the Mulreadys and Cecil Roebuck and Cecil
-         |                                      ^~~~~~~~~ Did you mean to spell `Mulreadys` this way?
+         |                                      ^~~~~~~~~ Did you mean `Misreads`?
     1867 | Schoen and Gulick the State senator and Newton Orchid, who controlled Films Par
 Suggest:
   - Replace with: “Misreads”
-  - Replace with: “Already”
-  - Replace with: “Unready”
 
 
 
@@ -2663,12 +2622,10 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1880 | and Russel Betty and the Corrigans and the Kellehers and the Dewars and the
-         |                                                              ^~~~~~ Did you mean to spell `Dewars` this way?
+         |                                                              ^~~~~~ Did you mean `Dewar's`?
     1881 | Scullys and S. W. Belcher and the Smirkes and the young Quinns, divorced now,
 Suggest:
   - Replace with: “Dewar's”
-  - Replace with: “Dears”
-  - Replace with: “Debars”
 
 
 
@@ -2733,12 +2690,10 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     1881 | Scullys and S. W. Belcher and the Smirkes and the young Quinns, divorced now,
-         |                                                         ^~~~~~ Did you mean to spell `Quinns` this way?
+         |                                                         ^~~~~~ Did you mean `Quinn's`?
     1882 | and Henry L. Palmetto, who killed himself by jumping in front of a subway train
 Suggest:
   - Replace with: “Quinn's”
-  - Replace with: “Quines”
-  - Replace with: “Quins”
 
 
 
@@ -2782,10 +2737,9 @@ Lint:    Spelling (63 priority)
 Message: |
     1887 | inevitably seemed they had been there before. I have forgotten their
     1888 | names—Jaqueline, I think, or else Consuela, or Gloria or Judy or June, and their
-         |       ^~~~~~~~~ Did you mean to spell `Jaqueline` this way?
+         |       ^~~~~~~~~ Did you mean `Jacqueline`?
 Suggest:
   - Replace with: “Jacqueline”
-  - Replace with: “Aquiline”
 
 
 
@@ -2993,7 +2947,6 @@ Message: |
 Suggest:
   - Replace with: “Valor”
   - Replace with: “Velour”
-  - Replace with: “Value”
 
 
 
@@ -3056,11 +3009,9 @@ Lint:    Spelling (63 priority)
 Message: |
     2076 | Europe, and I was glad that the sight of Gatsby’s splendid car was included in
     2077 | their sombre holiday. As we crossed Blackwell’s Island a limousine passed us,
-         |       ^~~~~~ Did you mean to spell `sombre` this way?
+         |       ^~~~~~ Did you mean `somber`?
 Suggest:
   - Replace with: “somber”
-  - Replace with: “hombre”
-  - Replace with: “sober”
 
 
 
@@ -3342,30 +3293,27 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     2188 | “He’s an Oggsford man.”
-         |          ^~~~~~~~ Did you mean to spell `Oggsford` this way?
+         |          ^~~~~~~~ Did you mean `Oxford`?
 Suggest:
   - Replace with: “Oxford”
-  - Replace with: “Longsword”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     2192 | “He went to Oggsford College in England. You know Oggsford College?”
-         |             ^~~~~~~~ Did you mean to spell `Oggsford` this way?
+         |             ^~~~~~~~ Did you mean `Oxford`?
 Suggest:
   - Replace with: “Oxford”
-  - Replace with: “Longsword”
 
 
 
 Lint:    Spelling (63 priority)
 Message: |
     2192 | “He went to Oggsford College in England. You know Oggsford College?”
-         |                                                   ^~~~~~~~ Did you mean to spell `Oggsford` this way?
+         |                                                   ^~~~~~~~ Did you mean `Oxford`?
 Suggest:
   - Replace with: “Oxford”
-  - Replace with: “Longsword”
 
 
 
@@ -3572,7 +3520,6 @@ Message: |
 Suggest:
   - Replace with: “Venture”
   - Replace with: “Ventral”
-  - Replace with: “Ventured”
 
 
 
@@ -3637,11 +3584,10 @@ Message: |
 Lint:    Spelling (63 priority)
 Message: |
     2455 | hard, limited person, who dealt in universal scepticism, and who leaned back
-         |                                              ^~~~~~~~~~ Did you mean to spell `scepticism` this way?
+         |                                              ^~~~~~~~~~ Did you mean `skepticism`?
     2456 | jauntily just within the circle of my arm. A phrase began to beat in my ears
 Suggest:
   - Replace with: “skepticism”
-  - Replace with: “asceticism”
 
 
 
@@ -3679,7 +3625,6 @@ Message: |
 Suggest:
   - Replace with: “uncertainty”
   - Replace with: “uncertain”
-  - Replace with: “certainly”
 
 
 
@@ -3777,10 +3722,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     2638 | “That’s the secret of Castle Rackrent. Tell your chauffeur to go far away and
-         |                              ^~~~~~~~ Did you mean to spell `Rackrent` this way?
+         |                              ^~~~~~~~ Did you mean `Racket`?
 Suggest:
   - Replace with: “Racket”
-  - Replace with: “Backrest”
 
 
 
@@ -4460,11 +4404,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     3319 | at the local club to-morrow, spoke in Miss Baedeker’s defence:
-         |                                                       ^~~~~~~ Did you mean to spell `defence` this way?
+         |                                                       ^~~~~~~ Did you mean `defense`?
 Suggest:
   - Replace with: “defense”
-  - Replace with: “decency”
-  - Replace with: “defect”
 
 
 
@@ -4493,11 +4435,10 @@ Message: |
 Lint:    Spelling (63 priority)
 Message: |
     3389 | Daisy began to sing with the music in a husky, rythmic whisper, bringing out a
-         |                                                ^~~~~~~ Did you mean to spell `rythmic` this way?
+         |                                                ^~~~~~~ Did you mean `rhythmic`?
     3390 | meaning in each word that it had never had before and would never have again.
 Suggest:
   - Replace with: “rhythmic”
-  - Replace with: “mythic”
 
 
 
@@ -4678,10 +4619,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     3572 | . . . Through the hall of the Buchanans’ house blew a faint wind, carrying the
-         |                               ^~~~~~~~~ Did you mean to spell `Buchanans` this way?
+         |                               ^~~~~~~~~ Did you mean `Buchanan's`?
 Suggest:
   - Replace with: “Buchanan's”
-  - Replace with: “Buchanan”
 
 
 
@@ -4706,11 +4646,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     3599 | Gatsby stood in the centre of the crimson carpet and gazed around with
-         |                     ^~~~~~ Did you mean to spell `centre` this way?
+         |                     ^~~~~~ Did you mean `center`?
 Suggest:
   - Replace with: “center”
-  - Replace with: “cent's”
-  - Replace with: “censure”
 
 
 
@@ -4843,11 +4781,9 @@ Lint:    Spelling (63 priority)
 Message: |
     3709 | We had luncheon in the dining-room, darkened too against the heat, and drank
     3710 | down nervous gayety with the cold ale.
-         |              ^~~~~~ Did you mean to spell `gayety` this way?
+         |              ^~~~~~ Did you mean `gaiety`?
 Suggest:
   - Replace with: “gaiety”
-  - Replace with: “gamely”
-  - Replace with: “gamete”
 
 
 
@@ -5088,12 +5024,10 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     3975 | could invent a protest the coupé came to a stop, and Daisy signalled us to draw
-         |                                                            ^~~~~~~~~ Did you mean to spell `signalled` this way?
+         |                                                            ^~~~~~~~~ Did you mean `signaled`?
     3976 | up alongside.
 Suggest:
   - Replace with: “signaled”
-  - Replace with: “signaler”
-  - Replace with: “signalized”
 
 
 
@@ -6059,10 +5993,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     4588 | The Buchanans’ house floated suddenly toward us through the dark rustling trees.
-         |     ^~~~~~~~~ Did you mean to spell `Buchanans` this way?
+         |     ^~~~~~~~~ Did you mean `Buchanan's`?
 Suggest:
   - Replace with: “Buchanan's”
-  - Replace with: “Buchanan”
 
 
 
@@ -7218,10 +7151,9 @@ Lint:    Spelling (63 priority)
 Message: |
     5519 | was a fine-appearing, gentlemanly young man, and when he told me he was an
     5520 | Oggsford I knew I could use him good. I got him to join up in the American
-         | ^~~~~~~~ Did you mean to spell `Oggsford` this way?
+         | ^~~~~~~~ Did you mean `Oxford`?
 Suggest:
   - Replace with: “Oxford”
-  - Replace with: “Longsword”
 
 
 
@@ -7475,11 +7407,9 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     5666 | going to the Ordways’? the Herseys’? the Schultzes’?” and the long green tickets
-         |                            ^~~~~~~ Did you mean to spell `Herseys` this way?
+         |                            ^~~~~~~ Did you mean `Hersey's`?
 Suggest:
   - Replace with: “Hersey's”
-  - Replace with: “Hersey”
-  - Replace with: “Hershey's”
 
 
 
@@ -7490,7 +7420,6 @@ Message: |
 Suggest:
   - Replace with: “Schultz's”
   - Replace with: “Schulz's”
-  - Replace with: “Schultz”
 
 
 
@@ -7798,12 +7727,10 @@ Suggest:
 Lint:    Spelling (63 priority)
 Message: |
     5817 | breath in the presence of this continent, compelled into an esthetic
-         |                                                             ^~~~~~~~ Did you mean to spell `esthetic` this way?
+         |                                                             ^~~~~~~~ Did you mean `aesthetic`?
     5818 | contemplation he neither understood nor desired, face to face for the last time
 Suggest:
   - Replace with: “aesthetic”
-  - Replace with: “pathetic”
-  - Replace with: “aesthetics”
 
 
 

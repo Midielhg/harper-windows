@@ -379,14 +379,35 @@ fn score_suggestion(misspelled_word: &[char], sug: &FuzzyMatchResult) -> i32 {
     score
 }
 
-/// Order the suggestions to be shown to the user.
+/// How far behind the best candidate a suggestion may score and still be worth showing.
+///
+/// Scores move in steps of ten per edit, so this keeps the candidates that are about as close to
+/// what was typed as the winner is, and drops the rest. Harper has no idea what a sentence means,
+/// so a long list is not a list of alternatives the reader can weigh — it is mostly words that
+/// happen to be spelled similarly, and the right one is already at the top.
+const SUGGESTION_SCORE_MARGIN: i32 = 10;
+
+/// Order the suggestions to be shown to the user, keeping those that are genuinely in contention.
 fn order_suggestions<'b>(
     misspelled_word: &[char],
     mut matches: Vec<FuzzyMatchResult<'b>>,
 ) -> Vec<&'b [char]> {
     matches.sort_by_cached_key(|v| score_suggestion(misspelled_word, v));
 
-    matches.into_iter().map(|v| v.word).collect()
+    let Some(best) = matches
+        .first()
+        .map(|best| score_suggestion(misspelled_word, best))
+    else {
+        return Vec::new();
+    };
+
+    matches
+        .into_iter()
+        .take_while(|candidate| {
+            score_suggestion(misspelled_word, candidate) <= best + SUGGESTION_SCORE_MARGIN
+        })
+        .map(|v| v.word)
+        .collect()
 }
 
 /// Get the closest matches in the provided [`Dictionary`] and rank them
