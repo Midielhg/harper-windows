@@ -29,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PWSTR, Result as WindowsResult};
 use wintheon::file::{IconSize, Priority};
 use wintheon::gather::Gatherer;
+pub mod clipboard;
 mod automation_service;
 
 /// How long the text has to stay unchanged before Harper reads the screen positions of its lints.
@@ -162,8 +163,16 @@ impl OsBroker for WindowsBroker {
     fn cursor_position(&self) -> Option<Pos2> {
         let mut point = POINT::default();
 
-        unsafe {
-            GetCursorPos(&mut point).unwrap();
+        // Windows refuses the cursor position outright while something it protects owns the
+        // screen — a UAC prompt, the lock screen, the Ctrl+Alt+Del screen, or any window run as
+        // administrator. That is an ordinary moment in a day, not a fault, but it used to come
+        // back as an error this unwrapped, which killed the highlighter. The toggle then showed
+        // itself as off, because by then it was: the process behind it had gone.
+        //
+        // There is no position to report while that is on screen, and there is nothing to draw on
+        // top of it either, so the frame is skipped and the next one asks again.
+        if unsafe { GetCursorPos(&mut point) }.is_err() {
+            return None;
         }
 
         let monitor_scale = get_focused_monitor_scale();

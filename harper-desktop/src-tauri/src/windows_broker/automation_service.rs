@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::rect::Rect;
 use crate::timing;
+use crate::windows_broker::clipboard::ClipboardText;
 use crate::windows_broker::get_focused_monitor_scale;
 use harper_core::{Span, linting::Suggestion};
 use is_macro::Is;
@@ -19,7 +20,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::IUIAutomationTextRange;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK,
+    KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
@@ -514,10 +515,24 @@ fn replace_span_by_typing(
 
     let expected = replaced_text(before, span, replacement);
 
-    if replacement.is_empty() {
-        send_key(VK_BACK);
-    } else {
-        send_text(replacement);
+    // Held until the replacement has landed, so the clipboard still holds it while the app reads
+    // it, and goes back to whatever was on it once it has.
+    let _clipboard;
+
+    {
+        let _step = timing::step(
+            "send",
+            Some(format!("{} chars", replacement.chars().count())),
+        );
+
+        if replacement.is_empty() {
+            send_key(VK_BACK);
+        } else {
+            match paste_text(replacement) {
+                Some(restore) => _clipboard = restore,
+                None => send_text(replacement),
+            }
+        }
     }
 
     // Hold the worker until the app has taken every keystroke. An app answers accessibility
@@ -610,6 +625,34 @@ fn selection_matches(element: &UIElement, range: &UITextRange) -> Result<bool> {
     }
 
     Ok(false)
+}
+
+/// Below this many characters, typing is sent rather than pasted.
+///
+/// A paste costs one keystroke plus the work of borrowing the clipboard and giving it back, so
+/// for a very short replacement typing is no slower and leaves the clipboard untouched.
+const PASTE_FROM: usize = 3;
+
+/// Puts `text` on the clipboard and pastes it, as one keystroke rather than one per character.
+///
+/// Returns the clipboard's restorer, which the caller holds until the paste has landed, or `None`
+/// when the clipboard could not be borrowed — the caller then types the replacement instead, so a
+/// busy clipboard costs speed rather than the fix.
+fn paste_text(text: &str) -> Option<ClipboardText> {
+    if text.chars().count() < PASTE_FROM {
+        return None;
+    }
+
+    let restore = ClipboardText::set(text)?;
+
+    send_inputs(&[
+        key_input(VK_CONTROL, false),
+        key_input(VK_V, false),
+        key_input(VK_V, true),
+        key_input(VK_CONTROL, true),
+    ]);
+
+    Some(restore)
 }
 
 /// Sends `text` as Unicode key input to whatever currently has keyboard focus.
