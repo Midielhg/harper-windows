@@ -1,10 +1,12 @@
 use std::cell::RefCell;
 use std::iter::once;
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
+use std::sync::mpsc::{
+    Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel,
+};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use crate::rect::Rect;
+use crate::rect::{Rect, Selection};
 use crate::timing;
 use crate::windows_broker::clipboard::ClipboardText;
 use crate::windows_broker::get_focused_monitor_scale;
@@ -23,6 +25,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+/// How long the drawing thread waits for a job before leaving it to finish on its own.
+///
+/// Comfortably longer than a read, which runs in a few milliseconds, and far shorter than the
+/// stall an app that has stopped answering would otherwise impose on the overlay.
+const WORKER_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Information about a worker thread.
 struct WorkerData {
@@ -60,6 +68,7 @@ enum JobResult {
     None,
     String(String),
     GroupedRects(Vec<Vec<Rect>>),
+    Selection(Option<Selection>),
     Err,
 }
 
@@ -131,13 +140,46 @@ impl AutomationService {
         self.worker_data = None;
     }
 
-    /// Attempts to run a worker job on the worker thread. Returns `None` if the worker thread does not exist.
+    /// Attempts to run a worker job on the worker thread.
+    ///
+    /// Returns `None` when the worker is not there, is still busy, or did not answer in time. The
+    /// caller is the thread drawing the overlay, and it has to keep drawing: a read it misses is
+    /// one frame of slightly stale highlights, while a read it waits on is a frozen overlay.
     fn run_worker_job(&mut self, job: WorkerJob, arguments: Vec<JobArgument>) -> Option<JobResult> {
-        self.take_pending_results();
+        // A result still owed from an earlier job would be handed back as this one's, so the job
+        // is not sent at all until the channel is clear.
+        if !self.take_pending_results() {
+            return None;
+        }
 
         let worker_data = self.worker_data.as_ref()?;
-        worker_data.sender.send((job, arguments)).unwrap();
-        Some(worker_data.receiver.recv().unwrap())
+
+        match worker_data.sender.try_send((job, arguments)) {
+            Ok(()) => {}
+            // The worker has not picked up its last job yet. Nothing is owed, so there is simply
+            // nothing to do this frame.
+            Err(TrySendError::Full(_)) => return None,
+            Err(TrySendError::Disconnected(_)) => {
+                self.stop_worker_thread();
+                return None;
+            }
+        }
+
+        match worker_data.receiver.recv_timeout(WORKER_TIMEOUT) {
+            Ok(result) => Some(result),
+            // The job is still running and will answer eventually, so the result is counted as
+            // owed and collected later rather than waited for now. An accessibility call into an
+            // app that has stopped answering can take as long as it likes, and before this it took
+            // the overlay down with it until the whole app was restarted.
+            Err(RecvTimeoutError::Timeout) => {
+                self.pending_results += 1;
+                None
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.stop_worker_thread();
+                None
+            }
+        }
     }
 
     /// Hands a job to the worker without waiting for it to finish.
@@ -153,26 +195,35 @@ impl AutomationService {
             return;
         };
 
-        if worker_data.sender.send((job, arguments)).is_ok() {
+        if worker_data.sender.try_send((job, arguments)).is_ok() {
             self.pending_results += 1;
         }
     }
 
     /// Clears the results of jobs nobody waited for, so a later job gets its own result back.
-    fn take_pending_results(&mut self) {
+    ///
+    /// Returns whether everything owed has now been collected. Nothing here blocks: an edit can
+    /// hold the worker for a second or more, and this runs on the thread drawing the overlay, so
+    /// waiting for one would stop the overlay for exactly as long as the edit took.
+    fn take_pending_results(&mut self) -> bool {
         while self.pending_results > 0 {
             let Some(worker_data) = self.worker_data.as_ref() else {
                 self.pending_results = 0;
-                return;
+                return true;
             };
 
-            if worker_data.receiver.recv().is_err() {
-                self.pending_results = 0;
-                return;
+            match worker_data.receiver.try_recv() {
+                Ok(_) => self.pending_results -= 1,
+                // Still working. It will be collected on a later frame.
+                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Disconnected) => {
+                    self.pending_results = 0;
+                    return true;
+                }
             }
-
-            self.pending_results -= 1;
         }
+
+        true
     }
 
     /// Grab text from the worker.
@@ -253,6 +304,17 @@ impl AutomationService {
 
         match result {
             JobResult::GroupedRects(rects) => Some(rects),
+            _ => None,
+        }
+    }
+
+    /// What the user has selected in the focused field, if anything.
+    pub fn get_selection(&mut self) -> Option<Selection> {
+        let window = self.resolve_focused_window()?;
+        let result = self.run_worker_job(get_selection_job, vec![JobArgument::Window(window)])?;
+
+        match result {
+            JobResult::Selection(selection) => selection,
             _ => None,
         }
     }
@@ -540,7 +602,10 @@ fn replace_span_by_typing(
     // worker — reading its text while keys are still queued makes it alternate between the two,
     // and the replacement appears one slow character at a time.
     {
-        let _step = timing::step("wait", Some(format!("{} chars typed", replacement.chars().count())));
+        let _step = timing::step(
+            "wait",
+            Some(format!("{} chars typed", replacement.chars().count())),
+        );
         wait_for_text(element, &expected);
     }
 
@@ -1048,6 +1113,83 @@ fn get_bounding_rect_job(automation: &UIAutomation, arguments: Vec<JobArgument>)
     }
 
     JobResult::GroupedRects(rects)
+}
+
+/// Reads what the user has selected, as an offset into the field's text plus where it starts on
+/// screen.
+///
+/// The offset is worked out by asking for the text that runs from the start of the field up to the
+/// selection and counting it, because the accessibility API compares range endpoints but will not
+/// say how far apart they are.
+fn get_selection_job(automation: &UIAutomation, arguments: Vec<JobArgument>) -> JobResult {
+    let Some(JobArgument::Window(window)) = arguments.first() else {
+        return JobResult::Err;
+    };
+
+    let Ok(element) = text_element_for_window(automation, *window, None) else {
+        return JobResult::Selection(None);
+    };
+
+    let Ok(pattern) = element.get_pattern::<UITextPattern>() else {
+        return JobResult::Selection(None);
+    };
+
+    let Ok(ranges) = pattern.get_selection() else {
+        return JobResult::Selection(None);
+    };
+
+    let Some(range) = ranges.first() else {
+        return JobResult::Selection(None);
+    };
+
+    let Ok(selected) = range.get_text(-1) else {
+        return JobResult::Selection(None);
+    };
+
+    let len = selected.chars().count();
+
+    // A caret is a selection of nothing, which is what a field reports whenever it simply has
+    // focus. There is nothing to review until the user has actually marked some text.
+    if len == 0 {
+        return JobResult::Selection(None);
+    }
+
+    let Ok(before) = pattern.get_document_range() else {
+        return JobResult::Selection(None);
+    };
+
+    if before
+        .move_endpoint_by_range(
+            TextPatternRangeEndpoint::End,
+            range,
+            TextPatternRangeEndpoint::Start,
+        )
+        .is_err()
+    {
+        return JobResult::Selection(None);
+    }
+
+    let Ok(prefix) = before.get_text(-1) else {
+        return JobResult::Selection(None);
+    };
+
+    let start = prefix.chars().count();
+
+    let Ok(rects) = bounding_rectangles_for_span(&element, start as i32, len as i32) else {
+        return JobResult::Selection(None);
+    };
+
+    let Some((x, y, _, height)) = rects.first().copied() else {
+        return JobResult::Selection(None);
+    };
+
+    let scale = get_focused_monitor_scale();
+
+    JobResult::Selection(Some(Selection {
+        start,
+        len,
+        anchor: Rect::new(x / scale, y / scale, 0.0, height / scale),
+    }))
 }
 
 fn focused_window() -> Option<(isize, u32)> {

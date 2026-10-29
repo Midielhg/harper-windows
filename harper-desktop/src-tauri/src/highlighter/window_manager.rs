@@ -163,6 +163,9 @@ impl WindowManagerApp {
             self.render_state.set_lints(lints);
         }
 
+        let selection = self.os_broker.selection();
+        self.render_state.set_selection(selection);
+
         for window in &self.windows {
             window.request_redraw();
         }
@@ -186,7 +189,10 @@ impl WindowManagerApp {
             // Keep the chip's own lint hovered while the pointer is on the chip, so moving to it
             // does not make it disappear.
             HitTarget::QuickFix(index) => Some(index),
-            HitTarget::Popup | HitTarget::ReviewPanel | HitTarget::None => None,
+            HitTarget::Popup
+            | HitTarget::ReviewPanel
+            | HitTarget::ReviewButton
+            | HitTarget::None => None,
         };
 
         self.render_state.set_hovered_lint(self.hovered_lint);

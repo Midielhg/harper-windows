@@ -4,18 +4,18 @@
 //! the whole list is laid out in one place instead, each row showing what was written and what
 //! Harper would put there, so the work can be done from one spot — or taken in a single click.
 
-use std::time::Duration;
-
 use harper_core::linting::{Lint, Suggestion};
 
 use super::lint_kind_color32;
 use crate::rect::ActionableLint;
 
-/// How long the lints must sit unchanged before the panel appears.
-///
-/// Short enough to come up when someone finishes a thought, long enough to stay out of the way
-/// while they are still typing.
-pub const IDLE_DELAY: Duration = Duration::from_secs(5);
+/// How wide and tall the button beside a selection is.
+pub const REVIEW_BUTTON_SIZE: f32 = 22.0;
+/// How far the button sits clear of the first selected character.
+pub const REVIEW_BUTTON_GAP: f32 = 6.0;
+
+const BUTTON_FILL: egui::Color32 = egui::Color32::from_rgb(0x1f, 0x6f, 0xeb);
+const BUTTON_ARROW: egui::Color32 = egui::Color32::from_rgb(0xff, 0xff, 0xff);
 
 const WIDTH: f32 = 320.0;
 const ROW_HEIGHT: f32 = 44.0;
@@ -55,12 +55,29 @@ pub struct ReviewRow {
 ///
 /// A lint with nothing to suggest, such as a sentence merely being long, has no row: the panel is
 /// a list of things that can be done, not a list of complaints.
-pub fn review_rows(lints: &[ActionableLint]) -> Vec<ReviewRow> {
+pub fn review_rows(lints: &[(usize, &ActionableLint)]) -> Vec<ReviewRow> {
+    let mut taken: Vec<harper_core::Span<char>> = Vec::new();
+
     lints
         .iter()
-        .enumerate()
         .filter_map(|(index, actionable_lint)| {
+            let index = *index;
             let suggestion = actionable_lint.lint.suggestions.first()?;
+            let span = actionable_lint.lint.span;
+
+            // One word can be flagged several times over — `ok` comes back as `okay`, `OK` and
+            // `oak` — and those are alternatives to choose between, not three things to fix. Listed
+            // as three rows they made the panel claim three times the work and grow to match, and
+            // "Accept all" could never have honoured the claim: applying a second replacement over
+            // characters the first one has already rewritten is dropped, by this panel and by the
+            // code that does the applying. So only the first of an overlapping run is offered here,
+            // and the rest stay where all the alternatives already are — in the popup on the word.
+            if taken.iter().any(|other| spans_overlap(*other, span)) {
+                return None;
+            }
+
+            taken.push(span);
+
             let written = written_text(&actionable_lint.lint, &actionable_lint.source_text);
 
             Some(ReviewRow {
@@ -73,6 +90,11 @@ pub fn review_rows(lints: &[ActionableLint]) -> Vec<ReviewRow> {
         })
         .take(MAX_ROWS)
         .collect()
+}
+
+/// Whether two lints cover any of the same characters.
+fn spans_overlap(left: harper_core::Span<char>, right: harper_core::Span<char>) -> bool {
+    left.start < right.end && right.start < left.end
 }
 
 /// The text the lint is about, shortened so a long run-on does not stretch the row.
@@ -119,7 +141,7 @@ fn ellipsized(text: &str) -> String {
 /// It is placed beside the text rather than over it, so the writing being corrected stays readable
 /// while the list is up.
 pub fn panel_bounds(
-    lints: &[ActionableLint],
+    lints: &[(usize, &ActionableLint)],
     row_count: usize,
     screens: &[egui::Rect],
 ) -> egui::Rect {
@@ -127,7 +149,7 @@ pub fn panel_bounds(
 
     let extent = lints
         .iter()
-        .map(|actionable_lint| &actionable_lint.rect)
+        .map(|(_, actionable_lint)| &actionable_lint.rect)
         .fold(None::<(f64, f64)>, |extent, rect| {
             let right = rect.x + rect.width;
 
@@ -141,6 +163,8 @@ pub fn panel_bounds(
 
     let size = egui::vec2(WIDTH, height);
     let position = egui::pos2(right as f32 + GAP_FROM_TEXT, top as f32);
+
+    let writing = writing_bounds(lints);
 
     // Anchoring beside the text puts the panel off the edge whenever the writing runs close to the
     // right of the screen, and a panel the user has to go looking for on another monitor is worse
@@ -157,6 +181,33 @@ pub fn panel_bounds(
         return egui::Rect::from_min_size(position, size);
     };
 
+    // Beside the writing is the best place to be, but only while there is room for it there.
+    // Clamping a panel that does not fit drags it straight back over the words being written,
+    // which is the one place it must not be: it covers the sentence and has to be dismissed before
+    // typing can carry on. So the other sides are tried before giving in, and the panel settles
+    // wherever it can sit clear of the text.
+    let candidates = [
+        position,
+        egui::pos2(writing.min.x - GAP_FROM_TEXT - size.x, writing.min.y),
+        egui::pos2(writing.min.x, writing.max.y + GAP_FROM_TEXT),
+        egui::pos2(writing.min.x, writing.min.y - GAP_FROM_TEXT - size.y),
+    ];
+
+    for candidate in candidates {
+        let bounds = egui::Rect::from_min_size(candidate, size);
+
+        let on_screen = bounds.min.x >= screen.left() + PADDING
+            && bounds.max.x <= screen.right() - PADDING
+            && bounds.min.y >= screen.top() + PADDING
+            && bounds.max.y <= screen.bottom() - PADDING;
+
+        if on_screen && !bounds.intersects(writing) {
+            return bounds;
+        }
+    }
+
+    // Nowhere clear to put it. Sitting under the writing beats sitting on top of it, so the last
+    // resort keeps its left edge and drops below, clamped onto the screen.
     egui::Rect::from_min_size(
         egui::pos2(
             position
@@ -170,6 +221,22 @@ pub fn panel_bounds(
         ),
         size,
     )
+}
+
+/// The block of writing the lints sit in.
+fn writing_bounds(lints: &[(usize, &ActionableLint)]) -> egui::Rect {
+    lints
+        .iter()
+        .map(|(_, actionable_lint)| {
+            let rect = &actionable_lint.rect;
+
+            egui::Rect::from_min_size(
+                egui::pos2(rect.x as f32, rect.y as f32),
+                egui::vec2(rect.width as f32, rect.height as f32),
+            )
+        })
+        .reduce(|all, rect| all.union(rect))
+        .unwrap_or(egui::Rect::ZERO)
 }
 
 /// Draws the panel and reports what the user clicked.
@@ -318,12 +385,24 @@ pub fn render_review_panel(
 mod tests {
     use harper_core::linting::Lint;
 
-    use super::panel_bounds;
+    use super::{panel_bounds, review_rows};
     use crate::rect::{ActionableLint, Rect};
+    use harper_core::linting::Suggestion;
 
     /// A lint occupying `rect`, which is all `panel_bounds` looks at.
     fn lint_at(rect: Rect) -> ActionableLint {
-        ActionableLint::new(rect, "Test".to_string(), Lint::default(), String::new(), |_| {})
+        ActionableLint::new(
+            rect,
+            "Test".to_string(),
+            Lint::default(),
+            String::new(),
+            |_| {},
+        )
+    }
+
+    /// The lints as the panel takes them: each paired with its place in the full list.
+    fn indexed(lints: &[ActionableLint]) -> Vec<(usize, &ActionableLint)> {
+        lints.iter().enumerate().collect()
     }
 
     /// Two monitors side by side: the main one, and a second to the right of it.
@@ -343,7 +422,7 @@ mod tests {
     fn stays_on_the_monitor_the_writing_is_on() {
         let lints = vec![lint_at(Rect::new(2400.0, 300.0, 80.0, 20.0))];
 
-        let bounds = panel_bounds(&lints, 2, &screens());
+        let bounds = panel_bounds(&indexed(&lints), 2, &screens());
 
         assert!(
             bounds.min.x >= 1920.0,
@@ -357,19 +436,109 @@ mod tests {
         // it without running off, so it has to come back rather than spill onto nothing.
         let lints = vec![lint_at(Rect::new(3800.0, 300.0, 30.0, 20.0))];
 
-        let bounds = panel_bounds(&lints, 2, &screens());
+        let bounds = panel_bounds(&indexed(&lints), 2, &screens());
 
         assert!(bounds.max.x <= 3840.0, "ran off the right: {bounds:?}");
-        assert!(bounds.min.x >= 1920.0, "ran onto the main screen: {bounds:?}");
+        assert!(
+            bounds.min.x >= 1920.0,
+            "ran onto the main screen: {bounds:?}"
+        );
+    }
+
+    /// A lint on `rect` covering `span`, with one suggestion.
+    fn lint_spanning(rect: Rect, start: usize, end: usize, replacement: &str) -> ActionableLint {
+        let mut lint = Lint::default();
+        lint.span = harper_core::Span::new(start, end);
+        lint.suggestions = vec![Suggestion::ReplaceWith(replacement.chars().collect())];
+
+        ActionableLint::new(rect, "Test".to_string(), lint, "ok".to_string(), |_| {})
+    }
+
+    #[test]
+    fn offers_one_row_for_a_word_with_several_alternatives() {
+        // `ok` comes back as `okay`, `OK` and `oak`: three ways to write one word, not three
+        // mistakes. Only one of them can ever be applied, so only one is offered.
+        let rect = Rect::new(400.0, 300.0, 20.0, 20.0);
+        let lints = vec![
+            lint_spanning(rect, 0, 2, "okay"),
+            lint_spanning(rect, 0, 2, "OK"),
+            lint_spanning(rect, 0, 2, "oak"),
+        ];
+
+        assert_eq!(review_rows(&indexed(&lints)).len(), 1);
+    }
+
+    #[test]
+    fn still_offers_a_row_for_each_separate_mistake() {
+        let lints = vec![
+            lint_spanning(Rect::new(400.0, 300.0, 20.0, 20.0), 0, 2, "okay"),
+            lint_spanning(Rect::new(500.0, 300.0, 20.0, 20.0), 5, 9, "word"),
+        ];
+
+        assert_eq!(review_rows(&indexed(&lints)).len(), 2);
+    }
+
+    #[test]
+    fn keeps_clear_of_the_writing_when_there_is_no_room_beside_it() {
+        // Writing hard against the right edge: there is no room to the right, so the panel has to
+        // find another side rather than being dragged back over the words.
+        let writing = Rect::new(1700.0, 300.0, 180.0, 20.0);
+        let lints = vec![lint_at(writing)];
+
+        let bounds = panel_bounds(&indexed(&lints), 2, &screens());
+
+        let text = egui::Rect::from_min_size(
+            egui::pos2(writing.x as f32, writing.y as f32),
+            egui::vec2(writing.width as f32, writing.height as f32),
+        );
+
+        assert!(
+            !bounds.intersects(text),
+            "the panel covered the writing: {bounds:?}"
+        );
     }
 
     #[test]
     fn sits_beside_writing_on_the_main_monitor() {
         let lints = vec![lint_at(Rect::new(400.0, 300.0, 80.0, 20.0))];
 
-        let bounds = panel_bounds(&lints, 2, &screens());
+        let bounds = panel_bounds(&indexed(&lints), 2, &screens());
 
         assert!(bounds.min.x >= 480.0, "overlapped the writing: {bounds:?}");
-        assert!(bounds.max.x <= 1920.0, "ran onto the second screen: {bounds:?}");
+        assert!(
+            bounds.max.x <= 1920.0,
+            "ran onto the second screen: {bounds:?}"
+        );
     }
+}
+
+/// Draws the button that opens the review panel, and reports whether it was clicked.
+///
+/// It sits at the start of the selection rather than over the words, so marking a sentence offers
+/// the review without anything landing on what is being read.
+pub fn render_review_button(ui: &mut egui::Ui, bounds: egui::Rect) -> bool {
+    let response = ui.interact(
+        bounds,
+        ui.id().with("harper-review-button"),
+        egui::Sense::click(),
+    );
+
+    let painter = ui.painter();
+
+    painter.circle_filled(bounds.center(), bounds.width() / 2.0, BUTTON_FILL);
+
+    // A chevron pointing the way the panel will open.
+    let middle = bounds.center();
+    let reach = bounds.width() * 0.18;
+
+    painter.add(egui::Shape::line(
+        vec![
+            egui::pos2(middle.x - reach, middle.y - reach * 1.4),
+            egui::pos2(middle.x + reach, middle.y),
+            egui::pos2(middle.x - reach, middle.y + reach * 1.4),
+        ],
+        egui::Stroke::new(2.0_f32, BUTTON_ARROW),
+    ));
+
+    response.clicked()
 }

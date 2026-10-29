@@ -11,7 +11,8 @@ use harper_core::{Document, linting::LintKind, linting::Suggestion};
 
 use self::quick_fix::{quick_fix_bounds, quick_fix_label, quick_fix_suggestion, render_quick_fix};
 use self::review_panel::{
-    IDLE_DELAY, ReviewAction, ReviewRow, panel_bounds, render_review_panel, review_rows,
+    REVIEW_BUTTON_GAP, REVIEW_BUTTON_SIZE, ReviewAction, ReviewRow, panel_bounds,
+    render_review_button, render_review_panel, review_rows,
 };
 use self::{
     draw_highlight::draw_highlight,
@@ -24,7 +25,7 @@ use self::{
 use super::{AddToDictionary, DisableRule, IgnoreLint, OpenSettings};
 use crate::{
     lint_kind_color::lint_kind_color,
-    rect::{ActionableLint, Rect},
+    rect::{ActionableLint, Rect, Selection},
 };
 
 /// A lint marker, popup, or empty overlay region found during cursor hit-testing.
@@ -34,8 +35,10 @@ pub enum HitTarget {
     Popup,
     /// The one-click fix offered under the lint at this index.
     QuickFix(usize),
-    /// The list of everything outstanding, shown once typing stops.
+    /// The list of everything outstanding, opened from the selection.
     ReviewPanel,
+    /// The button offered at the start of a selection, which opens that list.
+    ReviewButton,
     None,
 }
 
@@ -63,6 +66,14 @@ pub struct RenderState {
 
     /// Set when the user closes the panel, so it stays closed until the writing changes again.
     review_dismissed: bool,
+
+    /// What the user has selected in the field being written in.
+    selection: Option<Selection>,
+
+    /// Set when the user clicks the button by their selection, and the only thing that opens the
+    /// review panel. The panel used to let itself in after a pause in typing, which put it over
+    /// the sentence being written and made it something to dismiss rather than something to use.
+    review_requested: bool,
 
     /// Every monitor the overlay covers, in screen coordinates, used to keep the review panel on
     /// the one the writing is on.
@@ -124,6 +135,8 @@ impl RenderState {
             hovered_lint: None,
             lints_changed_at: Instant::now(),
             review_dismissed: false,
+            selection: None,
+            review_requested: false,
             screen_rects: Vec::new(),
             apply_all_requested: false,
             current_sidebar_position: FIRST_ROW_OFFSET,
@@ -230,7 +243,14 @@ impl RenderState {
 
         current.len() == lints.len()
             && current.iter().zip(lints).all(|(current, new)| {
-                current.lint.span == new.lint.span && current.lint.message == new.lint.message
+                // The written text has to be compared too, not just the lints drawn from it. The
+                // panel waits for this to stop changing as its sign that the writing has stopped,
+                // and a whole sentence can be typed without the set of mistakes in it changing at
+                // all — so on the lints alone the wait ran out mid-sentence and the panel opened
+                // over the words still being written.
+                current.source_text == new.source_text
+                    && current.lint.span == new.lint.span
+                    && current.lint.message == new.lint.message
             })
     }
 
@@ -239,23 +259,78 @@ impl RenderState {
     /// It stays away while a popup is open or the user is still typing, and it needs something to
     /// offer: a list with nothing actionable in it is just clutter.
     pub fn review_panel_layout(&self) -> Option<(egui::Rect, Vec<ReviewRow>)> {
-        if self.review_dismissed
-            || self.highlighted_lint.is_some()
-            || self.lints_changed_at.elapsed() < IDLE_DELAY
-        {
+        if self.review_dismissed || self.highlighted_lint.is_some() || !self.review_requested {
             return None;
         }
 
-        let rows = review_rows(self.lints());
+        let lints = self.selected_lints();
+        let rows = review_rows(&lints);
 
         if rows.is_empty() {
             return None;
         }
 
-        Some((
-            panel_bounds(self.lints(), rows.len(), &self.screen_rects),
-            rows,
+        Some((panel_bounds(&lints, rows.len(), &self.screen_rects), rows))
+    }
+
+    /// Notes what the user has selected, closing the panel when the selection moves on.
+    ///
+    /// Leaving it open over a selection it no longer describes would let a click apply a fix to
+    /// text the user is no longer looking at.
+    pub fn set_selection(&mut self, selection: Option<Selection>) {
+        if self.selection == selection {
+            return;
+        }
+
+        self.selection = selection;
+        self.review_requested = false;
+        self.review_dismissed = false;
+    }
+
+    /// The lints inside the current selection.
+    fn selected_lints(&self) -> Vec<(usize, &ActionableLint)> {
+        let Some(selection) = &self.selection else {
+            return Vec::new();
+        };
+
+        self.lints()
+            .iter()
+            .enumerate()
+            .filter(|(_, actionable_lint)| selection.contains(actionable_lint.lint.span))
+            .collect()
+    }
+
+    /// Where the button that opens the review panel sits, when there is one to offer.
+    ///
+    /// It hangs off the start of the selection, which is where the eye already is after dragging
+    /// across a sentence, and it is only offered while there is something inside the selection to
+    /// fix — a button that opens an empty list is just something else to look at.
+    pub fn review_button_bounds(&self) -> Option<egui::Rect> {
+        if self.review_requested || self.highlighted_lint.is_some() {
+            return None;
+        }
+
+        let selection = self.selection.as_ref()?;
+
+        if review_rows(&self.selected_lints()).is_empty() {
+            return None;
+        }
+
+        let anchor = &selection.anchor;
+        let middle = anchor.y as f32 + anchor.height as f32 / 2.0;
+
+        Some(egui::Rect::from_center_size(
+            egui::pos2(
+                anchor.x as f32 - REVIEW_BUTTON_GAP - REVIEW_BUTTON_SIZE / 2.0,
+                middle,
+            ),
+            egui::vec2(REVIEW_BUTTON_SIZE, REVIEW_BUTTON_SIZE),
         ))
+    }
+
+    /// Opens the review panel, as asked for by the button.
+    pub fn request_review(&mut self) {
+        self.review_requested = true;
     }
 
     /// Notes the screen one of the overlay windows covers.
@@ -320,6 +395,13 @@ impl RenderState {
             && bounds.contains(pos)
         {
             return HitTarget::QuickFix(index);
+        }
+
+        if self
+            .review_button_bounds()
+            .is_some_and(|bounds| bounds.contains(pos))
+        {
+            return HitTarget::ReviewButton;
         }
 
         self.lints()
@@ -387,8 +469,14 @@ impl RenderState {
             }
         }
 
+        if let Some(bounds) = self.review_button_bounds()
+            && render_review_button(ui, bounds.translate(-origin))
+        {
+            self.request_review();
+        }
+
         if let Some((bounds, rows)) = self.review_panel_layout() {
-            let total = self.lints().len();
+            let total = self.selected_lints().len();
 
             match render_review_panel(ui, bounds.translate(-origin), &rows, total) {
                 Some(ReviewAction::ApplyOne(index, suggestion)) => {

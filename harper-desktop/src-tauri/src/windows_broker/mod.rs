@@ -1,7 +1,7 @@
 use crate::windows_broker::automation_service::AutomationService;
 use crate::{
     os_broker::{AccessibilityPermissionStatus, AppSearchResult, OsBroker},
-    rect::ActionableLint,
+    rect::{ActionableLint, Selection},
 };
 use cached::cached;
 use egui::Pos2;
@@ -29,8 +29,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PWSTR, Result as WindowsResult};
 use wintheon::file::{IconSize, Priority};
 use wintheon::gather::Gatherer;
-pub mod clipboard;
 mod automation_service;
+pub mod clipboard;
 
 /// How long the text has to stay unchanged before Harper reads the screen positions of its lints.
 ///
@@ -57,6 +57,12 @@ const READ_INTERVAL: Duration = Duration::from_millis(160);
 /// which is why a heavy editor no longer gets hammered the hardest.
 const READ_DUTY_DIVISOR: u32 = 4;
 
+/// How long to leave the focused app alone between reads of what it has selected.
+///
+/// Short enough that the button turns up while the hand is still on the mouse, long enough not to
+/// be asking a busy app a question several times a second.
+const SELECTION_INTERVAL: Duration = Duration::from_millis(200);
+
 pub struct WindowsBroker {
     service: Arc<Mutex<AutomationService>>,
     is_integration_enabled: Box<dyn FnMut(&str) -> bool + Send + Sync>,
@@ -72,6 +78,13 @@ pub struct WindowsBroker {
     /// Lints depend on nothing but the text, so re-running them on text that has not changed is
     /// pure waste — and it was running several times a second for as long as a window stayed open.
     cached_lints: Option<(String, BTreeMap<String, Vec<Lint>>)>,
+    /// The last selection read from the focused app, and when it was read.
+    ///
+    /// Every read is a call into the app answered on the thread it draws and types with, so asking
+    /// on every frame would spend the app's time rather than Harper's. Between reads the last
+    /// answer stands, which is why the button can lag a drag by a fraction of a second.
+    last_selection: Option<Selection>,
+    last_selection_read: Option<Instant>,
 }
 
 impl WindowsBroker {
@@ -86,6 +99,8 @@ impl WindowsBroker {
             last_read: None,
             last_read_cost: Duration::ZERO,
             cached_lints: None,
+            last_selection: None,
+            last_selection_read: None,
         }
     }
 
@@ -158,6 +173,23 @@ impl OsBroker for WindowsBroker {
         self.last_read_cost = read_started.elapsed();
 
         boxes
+    }
+
+    fn selection(&mut self) -> Option<Selection> {
+        if self
+            .last_selection_read
+            .is_some_and(|last| last.elapsed() < SELECTION_INTERVAL)
+        {
+            return self.last_selection.clone();
+        }
+
+        self.last_selection_read = Some(Instant::now());
+
+        if let Ok(mut service) = self.service.lock() {
+            self.last_selection = service.get_selection();
+        }
+
+        self.last_selection.clone()
     }
 
     fn cursor_position(&self) -> Option<Pos2> {

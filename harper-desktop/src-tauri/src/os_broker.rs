@@ -42,6 +42,14 @@ pub trait OsBroker {
         lint_text: &mut dyn FnMut(&str) -> BTreeMap<String, Vec<Lint>>,
     ) -> Option<Vec<ActionableLint>>;
 
+    /// What the user has selected in the focused field, if anything.
+    ///
+    /// The review panel is opened from a selection, so a platform that cannot report one simply
+    /// never offers the button, and nothing else about the overlay changes.
+    fn selection(&mut self) -> Option<crate::rect::Selection> {
+        None
+    }
+
     /// Grab the position of the user's cursor on the screen.
     fn cursor_position(&self) -> Option<egui::Pos2>;
 

@@ -109,3 +109,24 @@ impl ColoredRect {
         }
     }
 }
+
+/// What the user has selected, and where that selection begins on screen.
+///
+/// The review panel is opened from the selection rather than appearing on its own, so this carries
+/// both the part of the text to review and the point to hang the button off.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Selection {
+    /// Where the selection starts, in characters from the start of the field.
+    pub start: usize,
+    /// How many characters are selected. Never zero: a caret is not a selection.
+    pub len: usize,
+    /// The left edge of the selection's first line, with its height.
+    pub anchor: Rect,
+}
+
+impl Selection {
+    /// Whether `span` lies within the selection.
+    pub fn contains(&self, span: harper_core::Span<char>) -> bool {
+        span.start >= self.start && span.end <= self.start + self.len
+    }
+}

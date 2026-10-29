@@ -6,9 +6,9 @@ mod tray;
 mod windows;
 
 use self::debug_broker::DebugBroker;
+use self::file_extensions::remove_file_extension_lints;
 use self::highlighter::Highlighter;
 use self::highlighter_service::HighlighterService;
-use self::file_extensions::remove_file_extension_lints;
 use self::text_shortcuts::TextShortcuts;
 
 /// The rule id shortcut expansions are grouped under, so they can be ignored like any other rule.
@@ -50,14 +50,14 @@ pub mod communication;
 pub mod config;
 mod debounce;
 mod desktop_updater;
+pub mod file_extensions;
 pub mod highlighter;
 pub mod highlighter_service;
 pub mod lint_kind_color;
 mod os_broker;
 pub mod rect;
-pub mod file_extensions;
-pub mod timing;
 pub mod text_shortcuts;
+pub mod timing;
 
 #[cfg(target_os = "macos")]
 mod mac_broker;
