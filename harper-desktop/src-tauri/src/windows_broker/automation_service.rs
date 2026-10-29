@@ -318,6 +318,11 @@ fn apply_suggestion_job(automation: &UIAutomation, mut arguments: Vec<JobArgumen
     // supports, and it leaves the app's own undo history intact.
     let replacement = replacement_for_span(&current_text, request.span, &request.suggestion);
 
+    if let Err(error) = element.set_focus() {
+        eprintln!("Unable to focus the field to apply the Windows suggestion: {error}");
+        return JobResult::None;
+    }
+
     if let Err(error) = replace_span_by_typing(&element, &current_text, request.span, &replacement)
     {
         eprintln!("Unable to type the Windows suggestion: {error}");
@@ -354,23 +359,49 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         return JobResult::None;
     };
 
+    // Read the field once for the whole batch. Every span was worked out against this text, so if
+    // it has moved on since, the spans point at characters that are no longer there and applying
+    // them would write over the wrong words.
+    match get_text(&element) {
+        Ok(text) if text == request.expected_text => {}
+        Ok(_) => {
+            eprintln!("Unable to apply Windows suggestions: the source text changed");
+            return JobResult::None;
+        }
+        Err(error) => {
+            eprintln!("Unable to apply Windows suggestions: {error}");
+            return JobResult::None;
+        }
+    }
+
+    if let Err(error) = element.set_focus() {
+        eprintln!("Unable to focus the field to apply the Windows suggestions: {error}");
+        return JobResult::None;
+    }
+
     let mut edits = request.edits;
     edits.sort_by_key(|(span, _)| std::cmp::Reverse(span.start));
 
     let mut next_start = request.expected_text.chars().count();
+    // What the field holds as the batch goes on. Each edit hands the next one its own answer, so
+    // nobody has to ask the app.
+    let mut current = request.expected_text.clone();
 
     for (span, suggestion) in edits {
         if span.end > next_start {
             continue;
         }
 
+        // Edits run backwards, so everything before this span is still as it was when the
+        // suggestion was worked out, and the original text describes it correctly.
         let replacement = replacement_for_span(&request.expected_text, span, &suggestion);
 
-        if let Err(error) =
-            replace_span_by_typing(&element, &request.expected_text, span, &replacement)
-        {
-            eprintln!("Unable to apply one of the Windows suggestions: {error}");
-            continue;
+        match replace_span_by_typing(&element, &current, span, &replacement) {
+            Ok(text) => current = text,
+            Err(error) => {
+                eprintln!("Unable to apply one of the Windows suggestions: {error}");
+                continue;
+            }
         }
 
         next_start = span.start;
@@ -416,32 +447,30 @@ fn replacement_for_span(current_text: &str, span: Span<char>, suggestion: &Sugge
 
 /// Selects the characters in `span` and types `replacement` over them.
 ///
-/// The element takes keyboard focus first, because the replacement is sent as ordinary key input.
-/// An empty replacement deletes the selection instead of typing nothing.
+/// `before` is what the field holds right now, and the text it will hold once the keys land is
+/// returned, so a batch can carry it from one edit to the next. Asking the app instead would cost
+/// a cross-process call per edit, answered on the very thread that has the keystrokes to take.
+///
+/// The element must already hold keyboard focus, because the replacement is sent as ordinary key
+/// input. An empty replacement deletes the selection instead of typing nothing.
 fn replace_span_by_typing(
     element: &UIElement,
-    current_text: &str,
+    before: &str,
     span: Span<char>,
     replacement: &str,
-) -> Result<()> {
-    if span.end > current_text.chars().count() {
+) -> Result<String> {
+    if span.end > before.chars().count() {
         return Err(Error::new(
             uiautomation::errors::ERR_INVALID_ARG,
             "the lint span is outside the source text",
         ));
     }
 
-    element.set_focus()?;
-
     let range = text_range_for_span(element, span.start as i32, span.len() as i32)?;
 
     select_and_confirm(element, &range)?;
 
-    // Work out what the field should read once the keys land, from what it reads right now rather
-    // than from the text the lints were made on, which an earlier edit in the same batch may
-    // already have changed.
-    let before = get_text(element).unwrap_or_default();
-    let expected = replaced_text(&before, span, replacement);
+    let expected = replaced_text(before, span, replacement);
 
     if replacement.is_empty() {
         send_key(VK_BACK);
@@ -455,7 +484,7 @@ fn replace_span_by_typing(
     // and the replacement appears one slow character at a time.
     wait_for_text(element, &expected);
 
-    Ok(())
+    Ok(expected)
 }
 
 /// `text` with the characters in `span` replaced by `replacement`.
