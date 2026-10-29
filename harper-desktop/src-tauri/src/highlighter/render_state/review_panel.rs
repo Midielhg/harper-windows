@@ -121,7 +121,7 @@ fn ellipsized(text: &str) -> String {
 pub fn panel_bounds(
     lints: &[ActionableLint],
     row_count: usize,
-    screen: Option<egui::Rect>,
+    screens: &[egui::Rect],
 ) -> egui::Rect {
     let height = HEADER_HEIGHT + ROW_HEIGHT * row_count as f32 + FOOTER_HEIGHT;
 
@@ -144,9 +144,16 @@ pub fn panel_bounds(
 
     // Anchoring beside the text puts the panel off the edge whenever the writing runs close to the
     // right of the screen, and a panel the user has to go looking for on another monitor is worse
-    // than one overlapping a little. Clamping here, where hit-testing reads the bounds too, keeps
-    // what is drawn and what is clickable the same.
-    let Some(screen) = screen else {
+    // than one overlapping a little. Clamp it to the monitor the writing is on, found from where
+    // the text itself sits rather than from whichever overlay window drew last. Clamping here,
+    // where hit-testing reads the bounds too, keeps what is drawn and what is clickable the same.
+    let anchor = egui::pos2(right as f32, top as f32);
+
+    let Some(screen) = screens
+        .iter()
+        .find(|screen| screen.contains(anchor))
+        .or_else(|| screens.iter().find(|screen| screen.contains(position)))
+    else {
         return egui::Rect::from_min_size(position, size);
     };
 
@@ -305,4 +312,64 @@ pub fn render_review_panel(
         });
 
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use harper_core::linting::Lint;
+
+    use super::panel_bounds;
+    use crate::rect::{ActionableLint, Rect};
+
+    /// A lint occupying `rect`, which is all `panel_bounds` looks at.
+    fn lint_at(rect: Rect) -> ActionableLint {
+        ActionableLint::new(rect, "Test".to_string(), Lint::default(), String::new(), |_| {})
+    }
+
+    /// Two monitors side by side: the main one, and a second to the right of it.
+    const MAIN: [f32; 4] = [0.0, 0.0, 1920.0, 1080.0];
+    const SECOND: [f32; 4] = [1920.0, 0.0, 3840.0, 1080.0];
+
+    fn screens() -> Vec<egui::Rect> {
+        [MAIN, SECOND]
+            .iter()
+            .map(|[left, top, right, bottom]| {
+                egui::Rect::from_min_max(egui::pos2(*left, *top), egui::pos2(*right, *bottom))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stays_on_the_monitor_the_writing_is_on() {
+        let lints = vec![lint_at(Rect::new(2400.0, 300.0, 80.0, 20.0))];
+
+        let bounds = panel_bounds(&lints, 2, &screens());
+
+        assert!(
+            bounds.min.x >= 1920.0,
+            "the panel was pulled onto the main monitor: {bounds:?}"
+        );
+    }
+
+    #[test]
+    fn is_pulled_back_from_the_edge_of_its_own_monitor() {
+        // Writing hard against the right edge of the second monitor: the panel cannot sit beside
+        // it without running off, so it has to come back rather than spill onto nothing.
+        let lints = vec![lint_at(Rect::new(3800.0, 300.0, 30.0, 20.0))];
+
+        let bounds = panel_bounds(&lints, 2, &screens());
+
+        assert!(bounds.max.x <= 3840.0, "ran off the right: {bounds:?}");
+        assert!(bounds.min.x >= 1920.0, "ran onto the main screen: {bounds:?}");
+    }
+
+    #[test]
+    fn sits_beside_writing_on_the_main_monitor() {
+        let lints = vec![lint_at(Rect::new(400.0, 300.0, 80.0, 20.0))];
+
+        let bounds = panel_bounds(&lints, 2, &screens());
+
+        assert!(bounds.min.x >= 480.0, "overlapped the writing: {bounds:?}");
+        assert!(bounds.max.x <= 1920.0, "ran onto the second screen: {bounds:?}");
+    }
 }

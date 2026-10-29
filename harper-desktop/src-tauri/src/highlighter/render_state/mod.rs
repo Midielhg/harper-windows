@@ -64,9 +64,14 @@ pub struct RenderState {
     /// Set when the user closes the panel, so it stays closed until the writing changes again.
     review_dismissed: bool,
 
-    /// The screen the overlay last drew into, in screen coordinates, used to keep the review
-    /// panel on it. Unknown until the first frame, which is long before the panel can appear.
-    screen_rect: Option<egui::Rect>,
+    /// Every monitor the overlay covers, in screen coordinates, used to keep the review panel on
+    /// the one the writing is on.
+    ///
+    /// There is an overlay window per monitor and they share this state, so remembering only the
+    /// screen drawn into last would be whichever window happened to render last — which is how the
+    /// panel ended up on the main monitor while the typing was on another. Empty until the first
+    /// frame, which is long before the panel can appear.
+    screen_rects: Vec<egui::Rect>,
 
     /// Set when the user asks the panel to take every suggestion, for the event loop to pick up.
     ///
@@ -119,7 +124,7 @@ impl RenderState {
             hovered_lint: None,
             lints_changed_at: Instant::now(),
             review_dismissed: false,
-            screen_rect: None,
+            screen_rects: Vec::new(),
             apply_all_requested: false,
             current_sidebar_position: FIRST_ROW_OFFSET,
             last_render: None,
@@ -248,9 +253,24 @@ impl RenderState {
         }
 
         Some((
-            panel_bounds(self.lints(), rows.len(), self.screen_rect),
+            panel_bounds(self.lints(), rows.len(), &self.screen_rects),
             rows,
         ))
+    }
+
+    /// Notes the screen one of the overlay windows covers.
+    ///
+    /// Each window reports the same rectangle every frame, so a monitor already known is updated
+    /// in place rather than collected again.
+    fn remember_screen(&mut self, screen: egui::Rect) {
+        match self
+            .screen_rects
+            .iter_mut()
+            .find(|known| known.min == screen.min)
+        {
+            Some(known) => *known = screen,
+            None => self.screen_rects.push(screen),
+        }
     }
 
     /// Takes the pending "fix everything" request, if the user made one.
@@ -330,7 +350,7 @@ impl RenderState {
     ///
     /// Each call also moves the sidebar toward its target by the time since the previous call.
     pub fn render(&mut self, ui: &mut egui::Ui, origin: egui::Vec2) {
-        self.screen_rect = Some(ui.ctx().screen_rect().translate(origin));
+        self.remember_screen(ui.ctx().screen_rect().translate(origin));
 
         let now = Instant::now();
         let time_since_last_render = self

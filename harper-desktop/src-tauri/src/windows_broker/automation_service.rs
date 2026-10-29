@@ -5,6 +5,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use crate::rect::Rect;
+use crate::timing;
 use crate::windows_broker::get_focused_monitor_scale;
 use harper_core::{Span, linting::Suggestion};
 use is_macro::Is;
@@ -284,18 +285,32 @@ fn apply_suggestion_job(automation: &UIAutomation, mut arguments: Vec<JobArgumen
         return JobResult::Err;
     }
 
-    let Ok(element) =
-        text_element_for_window(automation, request.window, Some(&request.expected_text))
-    else {
-        eprintln!(
-            "Unable to apply Windows suggestion: the source text element is no longer available"
-        );
-        return JobResult::None;
+    let _job = timing::step("apply-one", None);
+
+    let element = {
+        let _step = timing::step("find-element", None);
+
+        let Ok(element) =
+            text_element_for_window(automation, request.window, Some(&request.expected_text))
+        else {
+            eprintln!(
+                "Unable to apply Windows suggestion: the source text element is no longer available"
+            );
+            return JobResult::None;
+        };
+
+        element
     };
 
-    let Ok(current_text) = get_text(&element) else {
-        eprintln!("Unable to apply Windows suggestion: the source text can no longer be read");
-        return JobResult::None;
+    let current_text = {
+        let _step = timing::step("read-text", None);
+
+        let Ok(current_text) = get_text(&element) else {
+            eprintln!("Unable to apply Windows suggestion: the source text can no longer be read");
+            return JobResult::None;
+        };
+
+        current_text
     };
 
     let updated_text = match apply_suggestion_to_text(
@@ -318,9 +333,13 @@ fn apply_suggestion_job(automation: &UIAutomation, mut arguments: Vec<JobArgumen
     // supports, and it leaves the app's own undo history intact.
     let replacement = replacement_for_span(&current_text, request.span, &request.suggestion);
 
-    if let Err(error) = element.set_focus() {
-        eprintln!("Unable to focus the field to apply the Windows suggestion: {error}");
-        return JobResult::None;
+    {
+        let _step = timing::step("focus", None);
+
+        if let Err(error) = element.set_focus() {
+            eprintln!("Unable to focus the field to apply the Windows suggestion: {error}");
+            return JobResult::None;
+        }
     }
 
     if let Err(error) = replace_span_by_typing(&element, &current_text, request.span, &replacement)
@@ -352,16 +371,25 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         return JobResult::Err;
     }
 
-    let Ok(element) =
-        text_element_for_window(automation, request.window, Some(&request.expected_text))
-    else {
-        eprintln!("Unable to apply Windows suggestions: the source text changed");
-        return JobResult::None;
+    let _job = timing::step("apply-all", Some(format!("{} edits", request.edits.len())));
+
+    let element = {
+        let _step = timing::step("find-element", None);
+
+        let Ok(element) =
+            text_element_for_window(automation, request.window, Some(&request.expected_text))
+        else {
+            eprintln!("Unable to apply Windows suggestions: the source text changed");
+            return JobResult::None;
+        };
+
+        element
     };
 
     // Read the field once for the whole batch. Every span was worked out against this text, so if
     // it has moved on since, the spans point at characters that are no longer there and applying
     // them would write over the wrong words.
+    let _read = timing::step("read-text", None);
     match get_text(&element) {
         Ok(text) if text == request.expected_text => {}
         Ok(_) => {
@@ -374,9 +402,15 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         }
     }
 
-    if let Err(error) = element.set_focus() {
-        eprintln!("Unable to focus the field to apply the Windows suggestions: {error}");
-        return JobResult::None;
+    drop(_read);
+
+    {
+        let _step = timing::step("focus", None);
+
+        if let Err(error) = element.set_focus() {
+            eprintln!("Unable to focus the field to apply the Windows suggestions: {error}");
+            return JobResult::None;
+        }
     }
 
     let mut edits = request.edits;
@@ -395,6 +429,8 @@ fn apply_all_job(automation: &UIAutomation, mut arguments: Vec<JobArgument>) -> 
         // Edits run backwards, so everything before this span is still as it was when the
         // suggestion was worked out, and the original text describes it correctly.
         let replacement = replacement_for_span(&request.expected_text, span, &suggestion);
+
+        let _edit = timing::step("edit", None);
 
         match replace_span_by_typing(&element, &current, span, &replacement) {
             Ok(text) => current = text,
@@ -466,9 +502,15 @@ fn replace_span_by_typing(
         ));
     }
 
-    let range = text_range_for_span(element, span.start as i32, span.len() as i32)?;
+    let range = {
+        let _step = timing::step("range", None);
+        text_range_for_span(element, span.start as i32, span.len() as i32)?
+    };
 
-    select_and_confirm(element, &range)?;
+    {
+        let _step = timing::step("select", None);
+        select_and_confirm(element, &range)?;
+    }
 
     let expected = replaced_text(before, span, replacement);
 
@@ -482,7 +524,10 @@ fn replace_span_by_typing(
     // requests on the same thread it handles input on, so the lint loop — which runs on this
     // worker — reading its text while keys are still queued makes it alternate between the two,
     // and the replacement appears one slow character at a time.
-    wait_for_text(element, &expected);
+    {
+        let _step = timing::step("wait", Some(format!("{} chars typed", replacement.chars().count())));
+        wait_for_text(element, &expected);
+    }
 
     Ok(expected)
 }

@@ -56,6 +56,7 @@ pub mod lint_kind_color;
 mod os_broker;
 pub mod rect;
 pub mod file_extensions;
+pub mod timing;
 pub mod text_shortcuts;
 
 #[cfg(target_os = "macos")]
