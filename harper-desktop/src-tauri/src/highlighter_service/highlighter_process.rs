@@ -110,7 +110,12 @@ async fn keep_output(stderr: tokio::process::ChildStderr) {
             return;
         };
 
-        let _ = writeln!(file, "{line}");
+        // Stamped on the way in rather than by the highlighter itself, so a panic's own message
+        // is dated too. Local time, because the only people who read this are looking at a clock
+        // in the corner of the same screen.
+        let at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+
+        let _ = writeln!(file, "{at}  {line}");
     }
 }
 

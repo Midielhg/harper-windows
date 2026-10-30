@@ -3815,6 +3815,7 @@ dependencies = [
  "accessibility-sys",
  "base64 0.23.1",
  "cached",
+ "chrono",
  "clap",
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
