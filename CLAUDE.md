@@ -86,7 +86,8 @@ keeping in mind: **measure before believing a diagnosis.**
 - **A lint found and never drawn, and a fix that selects the wrong words.**
   Both came through `text_range_for_span`. A span counts characters in the text
   Harper linted; the accessibility API moves endpoints in units of its own, and
-  the two disagree over a `
+  the two disagree over a `
+
 ` the app moves as one unit and over anything
   outside the basic plane, which counts twice. Nothing reports the difference —
   the range builds and lands elsewhere. Ranges are now checked against the text
@@ -101,11 +102,18 @@ keeping in mind: **measure before believing a diagnosis.**
   `The app counts characters differently, re-anchored`. If instead the log says
   `The app gave nowhere to draw`, the text was scrolled out of view or the
   provider will not place it, and something else is needed.
-- **Tab is only armed as a whole-field apply**, not while the review button or
-  panel is showing. Offered twice, never chosen.
 - **`MAX_HOVER_WORDS` is 4**, not the single word the user asked for, so that
   `to loose` and other short fixes still answer the pointer. One number to
   change if that turns out wrong.
+
+## How Tab behaves
+
+The shortcut takes its meaning from what is on screen. In front of the review
+button or its panel it accepts what that offer lists — the fixes inside the
+selection — and puts the offer away, the same as clicking "Accept all". With
+neither showing it means everything in the field. It is caught, and swallowed,
+only while Harper is offering something, because catching it costs the user the
+Tab they pressed.
 
 ## Build, install, verify
 
