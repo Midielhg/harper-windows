@@ -83,19 +83,29 @@ keeping in mind: **measure before believing a diagnosis.**
   sits on screen, so a moved window read as a brand new selection and threw away
   the review the user had just asked for. It now compares `start`/`len` only.
 
+- **A lint found and never drawn, and a fix that selects the wrong words.**
+  Both came through `text_range_for_span`. A span counts characters in the text
+  Harper linted; the accessibility API moves endpoints in units of its own, and
+  the two disagree over a `
+` the app moves as one unit and over anything
+  outside the basic plane, which counts twice. Nothing reports the difference —
+  the range builds and lands elsewhere. Ranges are now checked against the text
+  they were built to cover and re-anchored. Drawing only pays for that when the
+  first attempt gives nowhere to draw, because every question runs on the
+  focused app's UI thread.
+
 ## Known open problems
 
-- **Some lints never reach the screen.** The linter finds them — proved by
-  running the desktop pipeline with the user's own `config.json` — but if the
-  app answers with an *empty* list of rectangles rather than an error, the lint
-  is silently dropped in `read_boxes`. The cause of the empty answer is not yet
-  known. There is logging for this now; read `highlighter.log`.
-- **`the app moved the selection away from the lint`** in `highlighter.log`
-  means a fix silently did not apply. `select_and_confirm` gave up after
-  `SELECTION_ATTEMPTS`. Refusing is correct; saying nothing to the user is not.
-- **Hover fires on whole-sentence lints**, so a long-sentence notice makes three
-  lines of text hoverable. It should be limited to single words unless the user
-  selects more.
+- **The re-anchoring above is a strong hypothesis, not a confirmed cause.** It
+  explains both symptoms and is safe either way, but confirmation is a log line:
+  `The app counts characters differently, re-anchored`. If instead the log says
+  `The app gave nowhere to draw`, the text was scrolled out of view or the
+  provider will not place it, and something else is needed.
+- **Tab is only armed as a whole-field apply**, not while the review button or
+  panel is showing. Offered twice, never chosen.
+- **`MAX_HOVER_WORDS` is 4**, not the single word the user asked for, so that
+  `to loose` and other short fixes still answer the pointer. One number to
+  change if that turns out wrong.
 
 ## Build, install, verify
 
