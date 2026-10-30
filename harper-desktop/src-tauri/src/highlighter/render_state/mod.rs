@@ -88,7 +88,7 @@ pub struct RenderState {
     ///
     /// Applying them needs the OS broker, which lives a layer above this one, so the request is
     /// left here rather than acted on during drawing.
-    apply_all_requested: bool,
+    apply_all_requested: Option<ApplyAllRequest>,
 
     /// The flyout card's drawn offset from the list card's top, in points.
     current_sidebar_position: f32,
@@ -118,6 +118,37 @@ pub struct RenderState {
     open_settings: OpenSettings,
 }
 
+/// Everything needed to apply a batch of fixes in one go.
+///
+/// The text is carried with the edits because the spans only mean anything against the text they
+/// were found in: if the field has changed since, the platform refuses the whole batch rather than
+/// cutting into whatever is there now.
+pub struct ApplyAllRequest {
+    pub source_text: String,
+    pub edits: Vec<(harper_core::Span<char>, Suggestion)>,
+}
+
+/// The edits behind a set of panel rows, paired with the text they were found in.
+///
+/// Each row carries its place in the full lint list, which is what keeps a row's offer and the
+/// edit it stands for the same thing. Rows whose lint has gone since the panel was drawn are
+/// dropped rather than guessed at, because an index into a list that has changed underneath
+/// points at some other word.
+fn request_for_rows(lints: &[ActionableLint], rows: &[ReviewRow]) -> Option<ApplyAllRequest> {
+    let source_text = lints.first()?.source_text.clone();
+
+    let edits: Vec<_> = rows
+        .iter()
+        .filter_map(|row| {
+            let actionable_lint = lints.get(row.index)?;
+
+            Some((actionable_lint.lint.span, row.suggestion.clone()))
+        })
+        .collect();
+
+    (!edits.is_empty()).then_some(ApplyAllRequest { source_text, edits })
+}
+
 impl RenderState {
     /// Creates render state through `set_lints` so initial lint data gets the same stale-popup guard
     /// used by later accessibility refreshes.
@@ -138,7 +169,7 @@ impl RenderState {
             selection: None,
             review_requested: false,
             screen_rects: Vec::new(),
-            apply_all_requested: false,
+            apply_all_requested: None,
             current_sidebar_position: FIRST_ROW_OFFSET,
             last_render: None,
             popup_drag: egui::Vec2::ZERO,
@@ -365,9 +396,18 @@ impl RenderState {
         }
     }
 
-    /// Takes the pending "fix everything" request, if the user made one.
-    pub fn take_apply_all_request(&mut self) -> bool {
-        std::mem::take(&mut self.apply_all_requested)
+    /// Takes the pending "accept all" request, if the user made one.
+    pub fn take_apply_all_request(&mut self) -> Option<ApplyAllRequest> {
+        self.apply_all_requested.take()
+    }
+
+    /// The edits behind a set of panel rows, paired with the text they were found in.
+    ///
+    /// Each row carries its place in the full lint list, which is what makes a row's offer and the
+    /// edit it stands for the same thing. Rows whose lint has since gone are dropped rather than
+    /// guessed at.
+    fn request_for(&self, rows: &[ReviewRow]) -> Option<ApplyAllRequest> {
+        request_for_rows(self.lints(), rows)
     }
 
     /// Follows the pointer so the lint under it can offer its top suggestion.
@@ -500,7 +540,12 @@ impl RenderState {
                     self.apply_and_forget(index, suggestion);
                 }
                 Some(ReviewAction::ApplyAll) => {
-                    self.apply_all_requested = true;
+                    // Gathered from the rows on screen rather than from every lint in the field.
+                    // The panel is opened from a selection and lists only what falls inside it, so
+                    // "Accept all" has to mean the lines above the button. Taking the whole field
+                    // instead rewrote text the user had not selected and could not see — picking
+                    // one paragraph of a long document and accepting its fixes edited all of it.
+                    self.apply_all_requested = self.request_for(&rows);
                     self.review_dismissed = true;
                 }
                 Some(ReviewAction::Dismiss) => self.review_dismissed = true,
@@ -602,4 +647,66 @@ fn lint_kind_color32(lint_kind: LintKind) -> egui::Color32 {
     let color = lint_kind_color(lint_kind);
 
     egui::Color32::from_rgb(color.r, color.g, color.b)
+}
+
+#[cfg(test)]
+mod tests {
+    use harper_core::{
+        Span,
+        linting::{Lint, Suggestion},
+    };
+
+    use super::{request_for_rows, review_rows};
+    use crate::rect::{ActionableLint, Rect};
+
+    /// A lint covering `span`, offering one replacement.
+    fn lint_spanning(start: usize, end: usize, replacement: &str) -> ActionableLint {
+        let mut lint = Lint::default();
+        lint.span = Span::new(start, end);
+        lint.suggestions = vec![Suggestion::ReplaceWith(replacement.chars().collect())];
+
+        ActionableLint::new(
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            "Test".to_string(),
+            lint,
+            "one two three".to_string(),
+            |_| {},
+        )
+    }
+
+    #[test]
+    fn accepting_all_touches_only_what_the_panel_listed() {
+        // Three mistakes in the field, but the panel was opened from a selection covering only the
+        // middle one. Accepting all used to rewrite the whole field, including text the user had
+        // not selected and the panel never showed.
+        let lints = vec![
+            lint_spanning(0, 3, "ONE"),
+            lint_spanning(4, 7, "TWO"),
+            lint_spanning(8, 13, "THREE"),
+        ];
+        let selected: Vec<_> = lints.iter().enumerate().skip(1).take(1).collect();
+
+        let rows = review_rows(&selected);
+        let request = request_for_rows(&lints, &rows).expect("the listed row offers an edit");
+
+        assert_eq!(
+            request
+                .edits
+                .iter()
+                .map(|(span, _)| *span)
+                .collect::<Vec<_>>(),
+            vec![Span::new(4, 7)]
+        );
+    }
+
+    #[test]
+    fn drops_a_row_whose_lint_has_gone() {
+        let lints = vec![lint_spanning(0, 3, "ONE"), lint_spanning(4, 7, "TWO")];
+        let rows = review_rows(&lints.iter().enumerate().collect::<Vec<_>>());
+
+        // The field changed and the second lint went with it.
+        let request = request_for_rows(&lints[..1], &rows).expect("the first row still stands");
+
+        assert_eq!(request.edits.len(), 1);
+    }
 }

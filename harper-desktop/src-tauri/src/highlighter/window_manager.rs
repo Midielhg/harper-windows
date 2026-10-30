@@ -14,7 +14,7 @@ use super::IgnoreLint;
 use super::OpenSettings;
 use super::RefreshConfig;
 use super::fix_all_hotkey::FixAllHotkey;
-use super::render_state::{HitTarget, RenderState};
+use super::render_state::{ApplyAllRequest, HitTarget, RenderState};
 use super::window::Window;
 use crate::os_broker::{LintText, OsBroker};
 use crate::rect::ActionableLint;
@@ -231,20 +231,39 @@ impl WindowManagerApp {
         self.fix_all_hotkey
             .set_popup_open(self.render_state.popup_layout().is_some());
 
-        let asked_by_panel = self.render_state.take_apply_all_request();
+        // Taken whether or not it is used, so a press that arrives in the same frame as a click
+        // on the panel is spent here rather than left to fire a whole-field apply next frame.
+        let pressed_shortcut = self.fix_all_hotkey.take_request();
 
-        if !self.fix_all_hotkey.take_request() && !asked_by_panel {
-            return;
-        }
+        // The panel's own request already names what it listed. The shortcut names nothing, so it
+        // keeps its older and wider meaning: everything in the field.
+        let request = match self.render_state.take_apply_all_request() {
+            Some(request) => Some(request),
+            None if pressed_shortcut => self.whole_field_request(),
+            None => return,
+        };
 
-        let lints = self.render_state.all_lints();
-
-        let Some(source_text) = lints
-            .first()
-            .map(|actionable_lint| actionable_lint.source_text.clone())
-        else {
+        let Some(request) = request else {
             return;
         };
+
+        let ApplyAllRequest { source_text, edits } = request;
+
+        self.os_broker.apply_all_suggestions(&source_text, &edits);
+        self.render_state.close_popup();
+
+        for window in &self.windows {
+            window.request_redraw();
+        }
+    }
+
+    /// Every fix available in the focused field, for the shortcut that asks for all of them.
+    ///
+    /// Lints that only point something out, such as a sentence being too long, carry no suggestion
+    /// and are left alone.
+    fn whole_field_request(&self) -> Option<ApplyAllRequest> {
+        let lints = self.render_state.all_lints();
+        let source_text = lints.first()?.source_text.clone();
 
         let edits: Vec<_> = lints
             .iter()
@@ -255,16 +274,7 @@ impl WindowManagerApp {
             })
             .collect();
 
-        if edits.is_empty() {
-            return;
-        }
-
-        self.os_broker.apply_all_suggestions(&source_text, &edits);
-        self.render_state.close_popup();
-
-        for window in &self.windows {
-            window.request_redraw();
-        }
+        (!edits.is_empty()).then_some(ApplyAllRequest { source_text, edits })
     }
 
     /// Dismisses an open popup when the user clicks anywhere that is not Harper's own.
