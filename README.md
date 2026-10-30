@@ -1,3 +1,34 @@
+> ## This is the Windows fork
+>
+> A fork of [Automattic's Harper](https://github.com/automattic/harper) that
+> makes **Harper Desktop work on Windows**. Upstream's desktop app targets
+> macOS: the overlay was there, the Windows OS integration behind it was not.
+>
+> **What this fork adds**
+>
+> - A Windows `OsBroker` built on UI Automation: it reads the focused app's
+>   text, places the underlines, follows the selection, and applies fixes.
+> - **Fixes applied by pasting rather than typing.** Injected keystrokes cost
+>   230–312ms *each* on a machine with a slow low-level keyboard hook, so a
+>   ten-character correction took nearly five seconds. A paste is four events
+>   however long the replacement is: applying a fix went from ~4,700ms to
+>   19–26ms.
+> - **A Grammarly-style review.** Select some text, click the blue arrow at the
+>   start of the selection, and the panel lists only the mistakes inside it.
+> - Underlines that **follow a window as it is dragged**, instead of being left
+>   behind while the app is too busy to answer.
+> - A tray icon that is **visible on a light taskbar** — the original artwork is
+>   pure white, drawn for the macOS menu bar.
+> - A highlighter that **stops dying** when a UAC prompt or the lock screen
+>   takes the screen, and **stops freezing** when the app it is correcting hangs.
+>
+> **Building:** see [`CLAUDE.md`](CLAUDE.md), which also records what is still
+> broken and how each problem was actually diagnosed.
+>
+> Everything below is upstream's README, unchanged.
+
+---
+
 <div id="header" align="center">
     <img src="logo.svg" width="400px" />
     <h1>Harper</h1>
