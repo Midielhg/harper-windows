@@ -213,20 +213,24 @@ impl RenderState {
             .filter(|index| row_count.is_some_and(|row_count| *index < row_count));
     }
 
-    /// Carries everything drawn along with a window that has moved.
+    /// Carries the underlines along with a window that has moved.
     ///
     /// This is a stand-in until the next read of the app, not a substitute for one: it assumes the
     /// text sits still inside the window, which is true of a move and false of anything that
     /// reflows. The positions it produces are never stored anywhere that outlives the next read.
+    ///
+    /// The selection is deliberately left alone. It is handed in whole by the broker on every
+    /// frame, and the broker moves its own copy, so moving it here as well shifted it twice. The
+    /// two copies then disagreed for good, every frame looked like a brand new selection, and the
+    /// review request was thrown away before the panel could be drawn — selecting text stopped
+    /// opening the panel at all once a window had been moved.
     pub fn translate_lints(&mut self, dx: f64, dy: f64) {
-        if let Some(lints) = self.last_lints.as_mut() {
-            for actionable_lint in lints {
-                actionable_lint.rect = actionable_lint.rect.translated(dx, dy);
-            }
-        }
+        let Some(lints) = self.last_lints.as_mut() else {
+            return;
+        };
 
-        if let Some(selection) = self.selection.as_mut() {
-            selection.anchor = selection.anchor.translated(dx, dy);
+        for actionable_lint in lints {
+            actionable_lint.rect = actionable_lint.rect.translated(dx, dy);
         }
     }
 
@@ -326,11 +330,23 @@ impl RenderState {
     /// Leaving it open over a selection it no longer describes would let a click apply a fix to
     /// text the user is no longer looking at.
     pub fn set_selection(&mut self, selection: Option<Selection>) {
-        if self.selection == selection {
+        // Only which characters are selected says whether this is a different selection. The
+        // anchor is merely where that selection currently sits on screen, and it changes whenever
+        // the window moves or the text scrolls — neither of which is the user selecting something
+        // else. Comparing it too meant that moving a window cancelled the review the user had
+        // just asked for, and the panel closed the moment it opened.
+        let same = match (&self.selection, &selection) {
+            (Some(current), Some(new)) => current.start == new.start && current.len == new.len,
+            (None, None) => true,
+            _ => false,
+        };
+
+        self.selection = selection;
+
+        if same {
             return;
         }
 
-        self.selection = selection;
         self.review_requested = false;
         self.review_dismissed = false;
     }
@@ -656,8 +672,8 @@ mod tests {
         linting::{Lint, Suggestion},
     };
 
-    use super::{request_for_rows, review_rows};
-    use crate::rect::{ActionableLint, Rect};
+    use super::{RenderState, request_for_rows, review_rows};
+    use crate::rect::{ActionableLint, Rect, Selection};
 
     /// A lint covering `span`, offering one replacement.
     fn lint_spanning(start: usize, end: usize, replacement: &str) -> ActionableLint {
@@ -697,6 +713,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Span::new(4, 7)]
         );
+    }
+
+    /// Render state with no lints and callbacks that do nothing, for testing selection handling.
+    fn bare_state() -> RenderState {
+        RenderState::new(
+            Vec::new(),
+            Box::new(|_, _| {}),
+            Box::new(|_| {}),
+            Box::new(|_| {}),
+            Box::new(|| {}),
+        )
+    }
+
+    fn selection_at(x: f64) -> Selection {
+        Selection {
+            start: 0,
+            len: 4,
+            anchor: Rect::new(x, 10.0, 0.0, 12.0),
+        }
+    }
+
+    #[test]
+    fn a_moved_window_does_not_throw_away_the_review_request() {
+        let mut state = bare_state();
+
+        state.set_selection(Some(selection_at(100.0)));
+        state.request_review();
+
+        // The window moves, so the underlines are carried along and the broker hands the selection
+        // back at its new position. Moving the selection here too would shift it twice over, and
+        // the mismatch would read as a fresh selection and cancel the request.
+        state.translate_lints(40.0, 0.0);
+        state.set_selection(Some(selection_at(140.0)));
+
+        assert!(
+            state.review_requested,
+            "the request was thrown away by a window move"
+        );
+    }
+
+    #[test]
+    fn selecting_something_else_does_throw_the_request_away() {
+        let mut state = bare_state();
+
+        state.set_selection(Some(selection_at(100.0)));
+        state.request_review();
+        state.set_selection(Some(Selection {
+            start: 20,
+            len: 4,
+            anchor: Rect::new(100.0, 10.0, 0.0, 12.0),
+        }));
+
+        assert!(!state.review_requested);
     }
 
     #[test]

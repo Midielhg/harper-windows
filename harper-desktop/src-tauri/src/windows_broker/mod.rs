@@ -94,6 +94,10 @@ pub struct WindowsBroker {
     /// window used to be. The window's own position costs nothing to read and needs no help from
     /// the app, so it is read every frame and the underlines are carried along with it.
     last_window_bounds: Option<(isize, RECT)>,
+    /// The text whose read has already been written to the log.
+    reported_read: Option<String>,
+    /// Why the last read gave up, so the same reason is not written over and over.
+    reported_skip: Option<&'static str>,
 }
 
 impl WindowsBroker {
@@ -111,6 +115,8 @@ impl WindowsBroker {
             last_selection: None,
             last_selection_read: None,
             last_window_bounds: None,
+            reported_read: None,
+            reported_skip: None,
         }
     }
 
@@ -494,6 +500,62 @@ pub fn get_window_path(window_id: isize) -> WindowsResult<PathBuf> {
 }
 
 impl WindowsBroker {
+    /// Records what one read of the focused app found and how much of it reached the screen.
+    ///
+    /// A lint reaches the screen only if the accessibility API answers with somewhere to put it.
+    /// When it answers with nowhere — an empty list of rectangles rather than a refusal — the lint
+    /// is dropped here and nothing anywhere says so: the mistake was found, and simply never
+    /// appears. That is indistinguishable, from the outside, from Harper not having found it.
+    ///
+    /// Reported once per piece of text, so watching a field does not fill the log.
+    fn report_read(&mut self, text: &str, placed: &[((String, Lint), Vec<crate::rect::Rect>)]) {
+        if self.reported_read.as_deref() == Some(text) {
+            return;
+        }
+
+        self.reported_read = Some(text.to_string());
+
+        let described: Vec<_> = placed
+            .iter()
+            .map(|((rule, lint), rects)| {
+                let written: String = text
+                    .chars()
+                    .skip(lint.span.start)
+                    .take(lint.span.len())
+                    .collect();
+                let placed = if rects.is_empty() {
+                    "NOT DRAWN"
+                } else {
+                    "drawn"
+                };
+
+                format!("{rule} on {written:?} {placed}")
+            })
+            .collect();
+
+        eprintln!(
+            "Read {} characters and found {} lints: {}",
+            text.chars().count(),
+            placed.len(),
+            described.join("; ")
+        );
+    }
+
+    /// Records a read that gave up before it could look for anything, once per reason.
+    ///
+    /// The first round of logging only spoke when lints went missing, so a read that never got as
+    /// far as finding any said nothing at all — and silence meant both "nothing was wrong" and
+    /// "nothing happened", which are the two answers that most needed telling apart.
+    fn report_skipped(&mut self, reason: &'static str) {
+        if self.reported_skip == Some(reason) {
+            return;
+        }
+
+        self.reported_skip = Some(reason);
+
+        eprintln!("Read nothing from the focused app: {reason}");
+    }
+
     /// Reads the focused app and turns what it finds into placed lints.
     ///
     /// Split out from `get_boxes` so the whole read is timed on every path out of it, including
@@ -504,12 +566,32 @@ impl WindowsBroker {
     ) -> Option<Vec<ActionableLint>> {
         match self.should_lint_focused_window() {
             Some(true) => {}
-            Some(false) => return Some(Vec::new()),
-            None => return None,
+            Some(false) => {
+                self.report_skipped(
+                    "the app is not one Harper is turned on for, or is being moved",
+                );
+                return Some(Vec::new());
+            }
+            None => {
+                self.report_skipped("the focused window could not be identified");
+                return None;
+            }
         }
 
-        let text = self.service.lock().ok()?.get_text()?;
+        let text = match self
+            .service
+            .lock()
+            .ok()
+            .and_then(|mut service| service.get_text())
+        {
+            Some(text) => text,
+            None => {
+                self.report_skipped("the app did not give up any text");
+                return None;
+            }
+        };
         if text.len() > 16_000 {
+            self.report_skipped("the text is longer than Harper will read");
             return Some(Vec::new());
         }
 
@@ -535,13 +617,18 @@ impl WindowsBroker {
             .ok()?
             .get_bounding_boxes(&text, lints.values().flatten().map(|lint| lint.span))?;
 
+        let placed: Vec<_> = lints
+            .into_iter()
+            .flat_map(|(lint_id, lints)| lints.into_iter().map(move |lint| (lint_id.clone(), lint)))
+            .zip(rects)
+            .collect();
+
+        self.reported_skip = None;
+        self.report_read(&text, &placed);
+
         Some(
-            lints
+            placed
                 .into_iter()
-                .flat_map(|(lint_id, lints)| {
-                    lints.into_iter().map(move |lint| (lint_id.clone(), lint))
-                })
-                .zip(rects)
                 .flat_map(|((lint_id, lint), rects)| {
                     let text = text.clone();
                     let service = self.service.clone();
