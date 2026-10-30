@@ -158,6 +158,12 @@ impl WindowManagerApp {
     /// Refreshes lint geometry from the OS broker inside the event loop so repaint requests happen on
     /// the same thread that owns the overlay windows.
     fn read_rect_updates(&mut self) {
+        // Done before the read, not after it, so a read that comes back in the same frame has the
+        // last word: it knows where the text actually is, and this only guesses.
+        if let Some((dx, dy)) = self.os_broker.window_shift() {
+            self.render_state.translate_lints(dx, dy);
+        }
+
         let lints = self.os_broker.get_boxes(self.lint_text.as_mut());
         if let Some(lints) = lints {
             self.render_state.set_lints(lints);

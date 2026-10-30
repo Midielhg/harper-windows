@@ -15,7 +15,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use windows::Win32::Foundation::{CloseHandle, HWND, POINT};
+use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MonitorFromWindow};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
@@ -24,7 +24,7 @@ use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 use windows::Win32::UI::WindowsAndMessaging::{
     GUI_INMOVESIZE, GUITHREADINFO, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo,
-    GetWindowThreadProcessId,
+    GetWindowRect, GetWindowThreadProcessId,
 };
 use windows::core::{PWSTR, Result as WindowsResult};
 use wintheon::file::{IconSize, Priority};
@@ -85,6 +85,15 @@ pub struct WindowsBroker {
     /// answer stands, which is why the button can lag a drag by a fraction of a second.
     last_selection: Option<Selection>,
     last_selection_read: Option<Instant>,
+    /// Where the focused window was the last time its position was looked at.
+    ///
+    /// Underline positions come from the accessibility API, which is answered by the app's own UI
+    /// thread and so is only asked a few times a second. Dragging a window moves the text far
+    /// faster than that, and during a drag that thread is busy with the drag itself, so the next
+    /// answer is slower still — which is exactly when the underlines were left stranded where the
+    /// window used to be. The window's own position costs nothing to read and needs no help from
+    /// the app, so it is read every frame and the underlines are carried along with it.
+    last_window_bounds: Option<(isize, RECT)>,
 }
 
 impl WindowsBroker {
@@ -101,7 +110,59 @@ impl WindowsBroker {
             cached_lints: None,
             last_selection: None,
             last_selection_read: None,
+            last_window_bounds: None,
         }
+    }
+
+    /// How far the focused window has moved since this was last called, in logical pixels.
+    ///
+    /// Returns `None` when there is nothing to carry: no focused window, a different window than
+    /// last time, a window that has not moved, or one that was resized rather than moved. A resize
+    /// reflows the text, so where each word ends up is not a matter of arithmetic and the next
+    /// real read has to answer it.
+    fn window_shift(&mut self) -> Option<(f64, f64)> {
+        let window = unsafe { GetForegroundWindow() };
+
+        let mut bounds = RECT::default();
+        if window.is_invalid() || unsafe { GetWindowRect(window, &mut bounds) }.is_err() {
+            self.last_window_bounds = None;
+            return None;
+        }
+
+        let key = window.0 as isize;
+        let previous = self.last_window_bounds.replace((key, bounds));
+
+        let (previous_key, previous_bounds) = previous?;
+        if previous_key != key {
+            return None;
+        }
+
+        let width = |rect: &RECT| rect.right - rect.left;
+        let height = |rect: &RECT| rect.bottom - rect.top;
+
+        if width(&bounds) != width(&previous_bounds) || height(&bounds) != height(&previous_bounds)
+        {
+            return None;
+        }
+
+        let dx = bounds.left - previous_bounds.left;
+        let dy = bounds.top - previous_bounds.top;
+
+        if dx == 0 && dy == 0 {
+            return None;
+        }
+
+        let scale = get_focused_monitor_scale();
+        let shift = (dx as f64 / scale, dy as f64 / scale);
+
+        // The cached selection is handed out again between reads, so it has to move too. Left
+        // behind, it would differ from the moved copy the overlay is drawing and be taken for a
+        // new selection, which closes the review panel every frame of a drag.
+        if let Some(selection) = self.last_selection.as_mut() {
+            selection.anchor = selection.anchor.translated(shift.0, shift.1);
+        }
+
+        Some(shift)
     }
 
     /// Whether the text has been the same for long enough to be worth measuring again.
@@ -173,6 +234,10 @@ impl OsBroker for WindowsBroker {
         self.last_read_cost = read_started.elapsed();
 
         boxes
+    }
+
+    fn window_shift(&mut self) -> Option<(f64, f64)> {
+        WindowsBroker::window_shift(self)
     }
 
     fn selection(&mut self) -> Option<Selection> {

@@ -42,6 +42,16 @@ pub trait OsBroker {
         lint_text: &mut dyn FnMut(&str) -> BTreeMap<String, Vec<Lint>>,
     ) -> Option<Vec<ActionableLint>>;
 
+    /// How far the focused window has moved since this was last asked, in logical pixels.
+    ///
+    /// Underline positions are read from the focused app only a few times a second, so a window
+    /// that is being dragged leaves them behind. Platforms that can report the move cheaply let
+    /// the overlay carry the underlines along until the next real read catches up; the rest
+    /// report nothing and keep the old behaviour.
+    fn window_shift(&mut self) -> Option<(f64, f64)> {
+        None
+    }
+
     /// What the user has selected in the focused field, if anything.
     ///
     /// The review panel is opened from a selection, so a platform that cannot report one simply

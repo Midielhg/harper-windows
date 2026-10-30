@@ -182,6 +182,23 @@ impl RenderState {
             .filter(|index| row_count.is_some_and(|row_count| *index < row_count));
     }
 
+    /// Carries everything drawn along with a window that has moved.
+    ///
+    /// This is a stand-in until the next read of the app, not a substitute for one: it assumes the
+    /// text sits still inside the window, which is true of a move and false of anything that
+    /// reflows. The positions it produces are never stored anywhere that outlives the next read.
+    pub fn translate_lints(&mut self, dx: f64, dy: f64) {
+        if let Some(lints) = self.last_lints.as_mut() {
+            for actionable_lint in lints {
+                actionable_lint.rect = actionable_lint.rect.translated(dx, dy);
+            }
+        }
+
+        if let Some(selection) = self.selection.as_mut() {
+            selection.anchor = selection.anchor.translated(dx, dy);
+        }
+    }
+
     /// The lints currently drawn, so the window manager can act on all of them at once.
     pub fn all_lints(&self) -> &[ActionableLint] {
         self.lints()

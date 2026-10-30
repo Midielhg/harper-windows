@@ -34,6 +34,15 @@ impl Rect {
     pub fn with_friendly_padding(&self) -> Self {
         self.with_padding(2.0)
     }
+
+    /// The same rectangle shifted by `(dx, dy)`.
+    pub fn translated(&self, dx: f64, dy: f64) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            ..*self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -128,5 +137,17 @@ impl Selection {
     /// Whether `span` lies within the selection.
     pub fn contains(&self, span: harper_core::Span<char>) -> bool {
         span.start >= self.start && span.end <= self.start + self.len
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rect;
+
+    #[test]
+    fn moves_a_rect_without_resizing_it() {
+        let moved = Rect::new(10.0, 20.0, 30.0, 40.0).translated(-4.0, 7.5);
+
+        assert_eq!(moved, Rect::new(6.0, 27.5, 30.0, 40.0));
     }
 }
