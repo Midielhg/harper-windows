@@ -454,6 +454,39 @@ impl RenderState {
         }
     }
 
+    /// Whether the shortcut has something to act on, so the key is worth catching.
+    ///
+    /// Catching it costs the user the Tab they pressed, so it is only taken while Harper is
+    /// visibly offering something to accept.
+    pub fn offers_apply_all(&self) -> bool {
+        self.popup_layout().is_some()
+            || self.review_panel_layout().is_some()
+            || self.review_button_bounds().is_some()
+    }
+
+    /// What the shortcut should apply while the review offer is on screen.
+    ///
+    /// The button and the opened panel are two steps of one offer — the fixes inside what the user
+    /// selected — so the shortcut means the same thing in front of either, and puts the offer away
+    /// afterwards just as clicking "Accept all" does. With neither showing there is nothing here
+    /// for it to name, and it keeps its older and wider meaning of the whole field.
+    pub fn take_review_apply_all_request(&mut self) -> Option<ApplyAllRequest> {
+        let rows = match self.review_panel_layout() {
+            Some((_, rows)) => rows,
+            None => {
+                self.review_button_bounds()?;
+
+                review_rows(&self.selected_lints())
+            }
+        };
+
+        let request = self.request_for(&rows)?;
+
+        self.review_dismissed = true;
+
+        Some(request)
+    }
+
     /// Takes the pending "accept all" request, if the user made one.
     pub fn take_apply_all_request(&mut self) -> Option<ApplyAllRequest> {
         self.apply_all_requested.take()
@@ -846,6 +879,48 @@ mod tests {
         }));
 
         assert!(!state.review_requested);
+    }
+
+    #[test]
+    fn the_shortcut_accepts_what_the_review_button_offers() {
+        let mut state = bare_state();
+
+        // Two mistakes in the field; the selection covers only the first.
+        state.set_lints(vec![
+            lint_spanning(0, 3, "ONE"),
+            lint_spanning(8, 13, "TWO"),
+        ]);
+        state.set_selection(Some(Selection {
+            start: 0,
+            len: 4,
+            anchor: Rect::new(100.0, 10.0, 0.0, 12.0),
+        }));
+
+        let request = state
+            .take_review_apply_all_request()
+            .expect("the button is offering the selected mistake");
+
+        assert_eq!(
+            request
+                .edits
+                .iter()
+                .map(|(span, _)| *span)
+                .collect::<Vec<_>>(),
+            vec![Span::new(0, 3)],
+            "the shortcut reached past what the button offered"
+        );
+    }
+
+    #[test]
+    fn the_shortcut_names_nothing_with_no_offer_on_screen() {
+        let mut state = bare_state();
+
+        state.set_lints(vec![lint_spanning(0, 3, "ONE")]);
+
+        // Nothing selected, so neither the button nor the panel is showing and the shortcut keeps
+        // its wider meaning, which the window manager supplies instead.
+        assert!(state.take_review_apply_all_request().is_none());
+        assert!(!state.offers_apply_all());
     }
 
     #[test]

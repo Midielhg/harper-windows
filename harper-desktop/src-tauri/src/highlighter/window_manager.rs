@@ -229,17 +229,21 @@ impl WindowManagerApp {
     /// carry no suggestion and are left alone.
     fn apply_all_if_requested(&mut self) {
         self.fix_all_hotkey
-            .set_popup_open(self.render_state.popup_layout().is_some());
+            .set_armed(self.render_state.offers_apply_all());
 
         // Taken whether or not it is used, so a press that arrives in the same frame as a click
         // on the panel is spent here rather than left to fire a whole-field apply next frame.
         let pressed_shortcut = self.fix_all_hotkey.take_request();
 
-        // The panel's own request already names what it listed. The shortcut names nothing, so it
-        // keeps its older and wider meaning: everything in the field.
+        // The panel's own request already names what it listed. The shortcut names nothing itself,
+        // so it takes its meaning from what is on screen: the review offer when there is one, and
+        // everything in the field when there is not.
         let request = match self.render_state.take_apply_all_request() {
             Some(request) => Some(request),
-            None if pressed_shortcut => self.whole_field_request(),
+            None if pressed_shortcut => match self.render_state.take_review_apply_all_request() {
+                Some(request) => Some(request),
+                None => self.whole_field_request(),
+            },
             None => return,
         };
 
