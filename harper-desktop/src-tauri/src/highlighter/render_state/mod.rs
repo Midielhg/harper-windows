@@ -459,48 +459,6 @@ impl RenderState {
         self.apply_all_requested.take()
     }
 
-    /// The most words a lint may cover and still answer the pointer.
-    ///
-    /// Some lints are about a whole sentence rather than a word in it — that it runs on, say — and
-    /// their span covers every character of it. Drawn as a hit target that is several lines of text
-    /// the pointer cannot cross without a card appearing over the writing, which is most of the time
-    /// and almost never wanted. Those belong in the review panel, which is opened deliberately.
-    ///
-    /// Not one word, though: `to loose` and other two- and three-word fixes are exactly the kind of
-    /// thing worth offering under the pointer, and they are nothing like a sentence.
-    const MAX_HOVER_WORDS: usize = 4;
-
-    /// Whether a lint is small enough to answer the pointer, rather than only the review panel.
-    fn reachable_by_pointer(actionable_lint: &ActionableLint) -> bool {
-        let span = actionable_lint.lint.span;
-
-        let written = actionable_lint
-            .source_text
-            .chars()
-            .skip(span.start)
-            .take(span.len());
-
-        // Counted without collecting the words, since this runs for every lint on every frame the
-        // pointer moves.
-        let mut words = 0;
-        let mut in_word = false;
-
-        for character in written {
-            if character.is_whitespace() {
-                in_word = false;
-            } else if !in_word {
-                in_word = true;
-                words += 1;
-
-                if words > MAX_HOVER_WORDS {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-
     /// The edits behind a set of panel rows, paired with the text they were found in.
     ///
     /// Each row carries its place in the full lint list, which is what makes a row's offer and the

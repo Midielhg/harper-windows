@@ -567,7 +567,7 @@ fn replace_span_by_typing(
 
     let range = {
         let _step = timing::step("range", None);
-        text_range_for_span(element, span.start as i32, span.len() as i32)?
+        matching_text_range(element, before, span)?
     };
 
     {
@@ -984,20 +984,145 @@ fn text_range_for_span(element: &UIElement, start: i32, len: i32) -> Result<UITe
     Ok(range)
 }
 
-fn bounding_rectangles_for_span(
-    element: &UIElement,
-    start: i32,
-    len: i32,
-) -> Result<Vec<(f64, f64, f64, f64)>> {
-    if start < 0 || len < 0 {
-        return Err(Error::new(
-            uiautomation::errors::ERR_INVALID_ARG,
-            "start and len must be non-negative",
-        ));
+/// Offsets worth trying for `span` besides its plain character count.
+///
+/// A span counts characters in the text Harper linted, but the accessibility API moves endpoints
+/// in units of its own, and the two do not always agree. A line break the app stores as `\r\n` is
+/// commonly moved over as a single unit, and anything outside the basic multilingual plane counts
+/// twice. Neither disagreement is reported: the range builds happily and simply lands on the wrong
+/// characters. Downstream that shows up as a lint that is found and never drawn, or a fix that
+/// selects the wrong words and is refused.
+fn alternative_spans(text: &str, span: Span<char>) -> Vec<(i32, i32)> {
+    let characters: Vec<char> = text.chars().collect();
+    let end = span.end.min(characters.len());
+    let start = span.start.min(end);
+    let (before, within) = (&characters[..start], &characters[start..end]);
+
+    let utf16_units = |slice: &[char]| {
+        slice
+            .iter()
+            .map(|character| character.len_utf16())
+            .sum::<usize>() as i32
+    };
+    let paired_breaks = |slice: &[char]| {
+        slice
+            .windows(2)
+            .filter(|pair| pair[0] == '\r' && pair[1] == '\n')
+            .count() as i32
+    };
+
+    let plain = (start as i32, (end - start) as i32);
+
+    [
+        (
+            plain.0 - paired_breaks(before),
+            plain.1 - paired_breaks(within),
+        ),
+        (utf16_units(before), utf16_units(within)),
+    ]
+    .into_iter()
+    .filter(|candidate| *candidate != plain && candidate.0 >= 0 && candidate.1 > 0)
+    .collect()
+}
+
+/// Whether `range` holds exactly the text it was built to cover.
+fn range_covers(range: &UITextRange, written: &str) -> bool {
+    range
+        .get_text(-1)
+        .is_ok_and(|found| found.trim_end_matches('\r') == written)
+}
+
+thread_local! {
+    /// The last text reported as re-anchored or unplaced, so neither is said every frame.
+    static LAST_REPORTED_SPAN: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+fn report_once(written: &str, what: &str) {
+    LAST_REPORTED_SPAN.with(|last| {
+        let mut last = last.borrow_mut();
+
+        if last.as_deref() == Some(written) {
+            return;
+        }
+
+        *last = Some(written.to_string());
+
+        eprintln!("{what}: {written:?}");
+    });
+}
+
+/// Builds the range for `span` and checks it covers the text it is meant to, re-anchoring if not.
+///
+/// Used where a wrong range is worse than a slow one: an applied fix overwrites whatever the range
+/// holds, so it is verified before anything is typed.
+fn matching_text_range(element: &UIElement, text: &str, span: Span<char>) -> Result<UITextRange> {
+    let plain = text_range_for_span(element, span.start as i32, span.len() as i32)?;
+    let written: String = text.chars().skip(span.start).take(span.len()).collect();
+
+    if range_covers(&plain, &written) {
+        return Ok(plain);
     }
 
-    let range = text_range_for_span(element, start, len)?;
+    for (start, len) in alternative_spans(text, span) {
+        let range = text_range_for_span(element, start, len)?;
 
+        if range_covers(&range, &written) {
+            report_once(
+                &written,
+                "The app counts characters differently, re-anchored",
+            );
+
+            return Ok(range);
+        }
+    }
+
+    Ok(plain)
+}
+
+fn bounding_rectangles_for_span(
+    element: &UIElement,
+    text: &str,
+    span: Span<char>,
+) -> Result<Vec<(f64, f64, f64, f64)>> {
+    // The plain offsets are tried first and on their own, because they are nearly always right and
+    // every extra question costs time on the focused app's own UI thread.
+    let plain = text_range_for_span(element, span.start as i32, span.len() as i32)?;
+    let found = rectangles_of(&plain)?;
+
+    if !found.is_empty() {
+        return Ok(found);
+    }
+
+    let written: String = text.chars().skip(span.start).take(span.len()).collect();
+
+    for (start, len) in alternative_spans(text, span) {
+        let range = text_range_for_span(element, start, len)?;
+
+        if !range_covers(&range, &written) {
+            continue;
+        }
+
+        let found = rectangles_of(&range)?;
+
+        if !found.is_empty() {
+            report_once(
+                &written,
+                "The app counts characters differently, re-anchored",
+            );
+
+            return Ok(found);
+        }
+    }
+
+    // Nothing left to try. Scrolled out of view is a legitimate reason for this, and so is a
+    // provider that will not place its own text; either way the underline cannot be drawn, so say
+    // so rather than letting the lint disappear without a word.
+    report_once(&written, "The app gave nowhere to draw");
+
+    Ok(Vec::new())
+}
+
+fn rectangles_of(range: &UITextRange) -> Result<Vec<(f64, f64, f64, f64)>> {
     let raw: &IUIAutomationTextRange = range.as_ref();
     let array = OwnedSafeArray(unsafe { raw.GetBoundingRectangles()? });
 
@@ -1077,10 +1202,12 @@ fn get_bounding_rect_job(automation: &UIAutomation, arguments: Vec<JobArgument>)
     let Some(JobArgument::Window(window)) = arguments.first() else {
         return JobResult::Err;
     };
-    let Some(JobArgument::Text(expected_text)) = arguments.get(1) else {
-        return JobResult::Err;
+    let expected_text = match arguments.get(1) {
+        Some(JobArgument::Text(text)) => text.clone(),
+        _ => return JobResult::Err,
     };
-    let Ok(text_element) = text_element_for_window(automation, *window, Some(expected_text)) else {
+    let Ok(text_element) = text_element_for_window(automation, *window, Some(&expected_text))
+    else {
         return JobResult::Err;
     };
 
@@ -1091,8 +1218,7 @@ fn get_bounding_rect_job(automation: &UIAutomation, arguments: Vec<JobArgument>)
     for span in arguments.into_iter().skip(2) {
         let span = span.expect_span();
 
-        let Ok(found_rects) =
-            bounding_rectangles_for_span(&text_element, span.start as i32, span.len() as i32)
+        let Ok(found_rects) = bounding_rectangles_for_span(&text_element, &expected_text, span)
         else {
             return JobResult::Err;
         };
@@ -1175,7 +1301,9 @@ fn get_selection_job(automation: &UIAutomation, arguments: Vec<JobArgument>) -> 
 
     let start = prefix.chars().count();
 
-    let Ok(rects) = bounding_rectangles_for_span(&element, start as i32, len as i32) else {
+    // The selection already has a range of its own, so its position is asked for directly rather
+    // than rebuilt from offsets that the app may count differently.
+    let Ok(rects) = rectangles_of(range) else {
         return JobResult::Selection(None);
     };
 
@@ -1206,4 +1334,34 @@ fn focused_window() -> Option<(isize, u32)> {
     }
 
     Some((hwnd.0 as isize, process_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alternative_spans;
+    use harper_core::Span;
+
+    #[test]
+    fn plain_text_needs_no_second_guess() {
+        assert!(alternative_spans("the dont there", Span::new(4, 8)).is_empty());
+    }
+
+    #[test]
+    fn offers_the_offsets_an_app_that_pairs_line_breaks_would_use() {
+        // Two line breaks before the mistake, so an app that moves over each pair as one character
+        // is two characters ahead of where the span says the word is.
+        let text = "one\r\ntwo\r\nthree dont";
+        let span = Span::new(16, 20);
+
+        assert_eq!(alternative_spans(text, span).first(), Some(&(14, 4)));
+    }
+
+    #[test]
+    fn offers_the_offsets_an_app_counting_in_utf16_would_use() {
+        // The emoji is one character here and two units there.
+        let text = "🙂 dont";
+        let span = Span::new(2, 6);
+
+        assert!(alternative_spans(text, span).contains(&(3, 4)));
+    }
 }
