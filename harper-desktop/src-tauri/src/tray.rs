@@ -109,9 +109,67 @@ pub fn menu_bar_icon(is_running: bool) -> tauri::Result<Image<'static>> {
     let height = icon.height();
     let mut rgba = icon.rgba().to_vec();
 
+    recolor_for_tray(&mut rgba);
     draw_status_line(&mut rgba, width, height, service_status_color(is_running));
 
     Ok(Image::new_owned(rgba, width, height))
+}
+
+/// Darkens the tray glyph when the taskbar behind it is light.
+///
+/// The artwork is drawn for the macOS menu bar, which means it is pure white throughout: every
+/// opaque pixel of it is white, and only the alpha channel carries the shape. On a dark taskbar
+/// that reads perfectly, and on a light one it is white on white — the icon is there, sized and
+/// placed correctly, and simply cannot be seen.
+///
+/// Only the colour is replaced. The alpha channel is what draws the glasses, so leaving it alone
+/// keeps every edge and curve exactly as it was.
+fn recolor_for_tray(rgba: &mut [u8]) {
+    if !taskbar_is_light() {
+        return;
+    }
+
+    // Not pure black: the tray's own icons are a dark grey, and matching them keeps Harper from
+    // looking heavier than everything beside it.
+    const DARK: [u8; 3] = [32, 32, 32];
+
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel[..3].copy_from_slice(&DARK);
+    }
+}
+
+/// Whether Windows is drawing the taskbar in its light theme.
+///
+/// Windows keeps the taskbar's brightness separate from the one apps use, so this reads the
+/// taskbar's own setting rather than the app one. A missing or unreadable value means the default,
+/// which is the dark taskbar the white artwork already suits.
+#[cfg(windows)]
+fn taskbar_is_light() -> bool {
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    use windows::core::w;
+
+    let mut value: u32 = 0;
+    let mut size = size_of::<u32>() as u32;
+
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
+            w!("SystemUsesLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut _),
+            Some(&mut size),
+        )
+    };
+
+    status == ERROR_SUCCESS && value == 1
+}
+
+#[cfg(not(windows))]
+fn taskbar_is_light() -> bool {
+    false
 }
 
 fn draw_status_line(rgba: &mut [u8], width: u32, height: u32, color: [u8; 4]) {
