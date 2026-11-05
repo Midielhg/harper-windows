@@ -56,7 +56,9 @@ keeping in mind: **measure before believing a diagnosis.**
 
 - **Fixes taking seconds to apply.** The cost was per injected `INPUT` event,
   about 230–312ms each, which matches Windows' 300ms `LowLevelHooksTimeout`
-  default — some other app on the machine has a slow low-level keyboard hook.
+  default. That was blamed on *another* app's slow hook, but it was measured
+  two days after Harper installed a hook of its own on its event-loop thread,
+  so some or all of it was likely Harper waiting on itself (see below).
   Harper cannot remove it, only send fewer events. Pasting instead of typing cut
   2N events to 4; `send` went from ~4,700ms to 19–26ms regardless of length.
   Two earlier theories (that typing was not the bottleneck, then that the lint
@@ -95,13 +97,30 @@ keeping in mind: **measure before believing a diagnosis.**
   first attempt gives nowhere to draw, because every question runs on the
   focused app's UI thread.
 
+- **Typing slowing down across the whole machine the longer Harper ran.** Not
+  accumulation — nothing in the Windows path holds more than one of anything.
+  The Tab shortcut's low-level keyboard hook was installed on the event-loop
+  thread, and such a hook is only delivered to a thread that is pumping
+  messages, with every key pressed anywhere waiting on it for up to
+  `LowLevelHooksTimeout`. That loop blocks for up to 250ms at a time asking the
+  focused app where its text is, so the hook went unanswered for just as long,
+  on every keystroke in every app, and the cost grew with the length of what
+  was being written rather than with uptime. The hook now has a thread that
+  does nothing but wait for keys.
+
 ## Known open problems
 
-- **The re-anchoring above is a strong hypothesis, not a confirmed cause.** It
-  explains both symptoms and is safe either way, but confirmation is a log line:
-  `The app counts characters differently, re-anchored`. If instead the log says
-  `The app gave nowhere to draw`, the text was scrolled out of view or the
-  provider will not place it, and something else is needed.
+- **Lints the app gives nowhere to draw are still real, and re-anchoring is not
+  the answer.** A week of use produced zero `re-anchored` lines and one
+  `The app gave nowhere to draw: "realpage"`, so for that case the offsets were
+  right and the provider simply would not place the text. The cause is still
+  unknown; scrolled out of view is the obvious candidate and has not been
+  checked. Re-anchoring stays because it is cheap and correct, but it has never
+  fired.
+- **Failed applies may be fixed.** The 10
+  `the app moved the selection away from the lint` lines all predate the range
+  fix, and a week has added none. Fewer applies attempted would explain that
+  too, so it is not proof.
 - **`MAX_HOVER_WORDS` is 4**, not the single word the user asked for, so that
   `to loose` and other short fixes still answer the pointer. One number to
   change if that turns out wrong.
