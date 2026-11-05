@@ -8,12 +8,15 @@
 #[cfg(windows)]
 mod implementation {
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::channel;
+    use std::thread::JoinHandle;
 
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_TAB;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, HHOOK, KBDLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx,
-        WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+        CallNextHookEx, GetMessageW, KBDLLHOOKSTRUCT, MSG, PostThreadMessageW, SetWindowsHookExW,
+        UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
     };
 
     /// Whether Harper is offering something the shortcut could accept. The hook runs on this
@@ -24,20 +27,58 @@ mod implementation {
     static REQUESTED: AtomicBool = AtomicBool::new(false);
 
     pub struct FixAllHotkey {
-        hook: Option<HHOOK>,
+        watcher: Option<(u32, JoinHandle<()>)>,
     }
 
     impl FixAllHotkey {
-        /// Installs the hook on the calling thread, which must be the one running the event loop
-        /// because a low-level keyboard hook is only delivered to a thread that pumps messages.
+        /// Installs the hook on a thread of its own, which does nothing but wait for keys.
+        ///
+        /// A low-level keyboard hook is only delivered to a thread that is pumping messages, and
+        /// every key pressed anywhere on the machine waits on it: Windows holds the key until the
+        /// hook answers or `LowLevelHooksTimeout` — 300ms by default — runs out. Installed on the
+        /// event loop, as it first was, the hook went unanswered for as long as that loop spent
+        /// asking the focused app where its text is, which is up to a quarter of a second at a
+        /// time. The cost of that landed on every keystroke in every app, Harper's own window or
+        /// not, and grew with the length of what was being written. On a thread that only waits,
+        /// the hook answers at once however busy the rest of Harper is.
         pub fn install() -> Self {
-            let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) }
+            let (report_thread, thread_id) = channel();
+
+            let watcher = std::thread::Builder::new()
+                .name("fix-all-hotkey".to_string())
+                .spawn(move || {
+                    let hook =
+                        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0) }
+                            .inspect_err(|error| {
+                                eprintln!("Unable to watch for the fix-all shortcut: {error}");
+                            })
+                            .ok();
+
+                    // Sent after the hook is installed but whether or not it worked, so install()
+                    // never waits for a thread that is already giving up.
+                    let _ = report_thread.send(unsafe { GetCurrentThreadId() });
+
+                    let Some(hook) = hook else {
+                        return;
+                    };
+
+                    // Nothing is dispatched: the hook is called by the system as the thread waits
+                    // here, and this thread owns no windows of its own. The loop ends on the
+                    // WM_QUIT posted by `Drop`, and on the -1 that a failed `GetMessageW` returns.
+                    let mut message = MSG::default();
+
+                    while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {}
+
+                    let _ = unsafe { UnhookWindowsHookEx(hook) };
+                })
                 .inspect_err(|error| {
-                    eprintln!("Unable to watch for the fix-all shortcut: {error}");
+                    eprintln!("Unable to start the fix-all shortcut watcher: {error}");
                 })
                 .ok();
 
-            Self { hook }
+            let watcher = watcher.and_then(|handle| Some((thread_id.recv().ok()?, handle)));
+
+            Self { watcher }
         }
 
         pub fn set_armed(&self, armed: bool) {
@@ -52,9 +93,14 @@ mod implementation {
 
     impl Drop for FixAllHotkey {
         fn drop(&mut self) {
-            if let Some(hook) = self.hook.take() {
-                let _ = unsafe { UnhookWindowsHookEx(hook) };
-            }
+            let Some((thread_id, handle)) = self.watcher.take() else {
+                return;
+            };
+
+            // The hook has to be removed by the thread that installed it, so the thread is asked
+            // to finish and waited for rather than simply dropped.
+            let _ = unsafe { PostThreadMessageW(thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+            let _ = handle.join();
         }
     }
 
